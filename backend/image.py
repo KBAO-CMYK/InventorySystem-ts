@@ -177,7 +177,7 @@ def update_feature_image_path(feature_id, image_relative_path, host="127.0.0.1:5
 
         # 仅更新图片相关字段，不修改任何关联ID
         feature_df.loc[feature_mask, "图片路径"] = image_relative_path
-        feature_df.loc[feature_mask, "图片"] = f"http://{host}/{image_relative_path}"
+        # feature_df.loc[feature_mask, "图片"] = f"http://{host}/{image_relative_path}"
 
         # 强制写回原有商品ID（双重防护）
         feature_df.loc[feature_mask, "关联商品ID"] = original_product_id

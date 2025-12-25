@@ -1,126 +1,858 @@
-def get_inventory_list():
-    """查询库存列表 - 统一计算入库/出库/借/还后的库存数量"""
-    try:
-        csv_data = read_csv_data()
+<script lang="ts">
+  import { createEventDispatcher, onDestroy,onMount } from 'svelte';
+  import { api, handleApiError } from '../lib/api.ts';
+  import type { ApiSuccessResponse } from '../lib/api.ts';
 
-        # 获取所有相关表
-        inventory_df = csv_data.get("inventory", pd.DataFrame())
-        feature_df = csv_data.get("feature", pd.DataFrame())
-        product_df = csv_data.get("product", pd.DataFrame())
-        location_df = csv_data.get("location", pd.DataFrame())
-        manufacturer_df = csv_data.get("manufacturer", pd.DataFrame())
-        operation_df = csv_data.get("operation_record", pd.DataFrame())
+  // ========== 类型定义 ==========
+  interface UploadImageResponseData {
+    relative_path: string;
+    [key: string]: any;
+  }
 
-        # 批量转换为可序列化格式
-        inventory_list = df_to_serializable_list(inventory_df)
-        feature_list = df_to_serializable_list(feature_df)
-        product_list = df_to_serializable_list(product_df)
-        location_list = df_to_serializable_list(location_df)
-        manufacturer_list = df_to_serializable_list(manufacturer_df)
-        operation_list = df_to_serializable_list(operation_df)
+  interface BatchDeleteImageRequest {
+    featureIds: string[];
+    imagePaths: string[];
+    relatedProductIds?: string[];
+    cleanCsv: boolean;
+  }
 
-        # 构建索引字典
-        feature_index = {}
-        for feature in feature_list:
-            feature_id = feature.get("商品特征ID")
-            if feature_id not in feature_index:
-                feature_index[feature_id] = feature
+  interface BatchDeleteImageResponse {
+    status: 'success' | 'error' | 'partial_success';
+    message: string;
+    total: number;
+    success_count: number;
+    fail_count: number;
+    details: Array<{
+      type: 'featureId' | 'imagePath';
+      id: string;
+      status: 'success' | 'fail';
+      message: string;
+      image_path: string;
+      image_deleted: boolean;
+      csv_cleaned: boolean;
+      remaining_references: number;
+      full_image_path?: string;
+    }>;
+  }
 
-        product_index = {}
-        for product in product_list:
-            product_id = product.get("商品ID")
-            if product_id not in product_index:
-                product_index[product_id] = product
+  // 新增：临时上传接口返回类型
+  interface TempUploadImageResponse {
+    success: boolean;
+    data: {
+      tempImageId: string; // 后端返回的临时图片标识
+      expireAt?: string; // 可选：临时文件过期时间
+    };
+    message: string;
+  }
 
-        location_index = {}
-        for loc in location_list:
-            location_id = loc.get("地址ID")
-            if location_id not in location_index:
-                location_index[location_id] = loc
+  type ImageUploadEvents = {
+    change: string;
+  };
 
-        manufacturer_index = {}
-        for mfr in manufacturer_list:
-            manufacturer_id = mfr.get("厂家ID")
-            if manufacturer_id not in manufacturer_index:
-                manufacturer_index[manufacturer_id] = mfr
+  // ========== 事件派发 ==========
+  const dispatch = createEventDispatcher<ImageUploadEvents>();
 
-        # 建立操作记录索引（按关联库存ID）
-        operation_index = {}
-        for operation in operation_list:
-            inv_id = operation.get("关联库存ID")
-            if inv_id not in operation_index:
-                operation_index[inv_id] = []
-            operation_index[inv_id].append(operation)
+  // ========== Props 定义 ==========
+  export let value: string | CustomEvent<string> | Record<string, any> = '';
+  export let productCode: string = '';
+  export let disabled: boolean = false;
+  export let featureId: string | number = '';
 
-        # 组装最终数据
-        inventory_with_details = []
-        for inv in inventory_list:
-            # 获取关联ID
-            feature_id = inv.get("关联商品特征ID")
-            location_id = inv.get("关联位置ID")
-            manufacturer_id = inv.get("关联厂家ID")
-            inventory_id = inv.get("库存ID")
+  // ========== 核心配置 ==========
+  const IMAGE_API_BASE: string = 'http://127.0.0.1:5000/api/get_image';
+  const IMAGE_STATIC_BASE: string = 'http://127.0.0.1:5000/image';
+  const DELETE_IMAGE_API: string = 'http://127.0.0.1:5000/api/batch_delete_image';
+  const ERROR_PLACEHOLDER: string = 'https://picsum.photos/40/40?grayscale&text=无图';
+  const ALLOWED_FORMATS: readonly string[] = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'];
+  const MAX_FILE_SIZE: number = 16 * 1024 * 1024;
+  const EDIT_IMAGE_URL: string = 'http://localhost:5174/';
+  // 新增：后端临时上传接口（核心修改）
+  const TEMP_UPLOAD_API: string = 'http://127.0.0.1:5000/api/temp_upload_image';
 
-            # 获取商品特征信息
-            feature_dict = {}
-            if feature_id is not None and feature_id in feature_index:
-                feature_dict = feature_index[feature_id]
-                # 通过商品特征获取商品信息
-                product_id = feature_dict.get("关联商品ID")
-                if product_id is not None and product_id in product_index:
-                    inv["商品信息"] = product_index[product_id]
-                else:
-                    inv["商品信息"] = {}
+  // ========== 状态变量 ==========
+  let previewUrlCache: string = '';
+  let imgLoadError: boolean = false;
+  let debugPreviewUrl: string = '';
+  let isUploading: boolean = false;
+  let uploadProgress: number = 0;
+  let isDeleting: boolean = false;
+  let pendingFile: File | null = null;
+  let pendingFilePreviewUrl: string = '';
+  // 新增：临时上传状态
+  let isTempUploading: boolean = false;
 
-            # 获取位置信息
-            if location_id is not None and location_id in location_index:
-                inv["位置信息"] = location_index[location_id]
-            else:
-                inv["位置信息"] = {}
+  // ========== 响应式处理 ==========
+  $: safeValue = (() => {
+    if (value && typeof value === 'object' && 'detail' in value) {
+      return (value as CustomEvent<string>).detail || '';
+    }
+    if (value && typeof value === 'object' && !(value instanceof Event)) {
+      return String(value) || '';
+    }
+    return String(value || '').trim();
+  })();
 
-            # 获取厂家信息
-            if manufacturer_id is not None and manufacturer_id in manufacturer_index:
-                inv["厂家信息"] = manufacturer_index[manufacturer_id]
-            else:
-                inv["厂家信息"] = {}
+  // ========== 工具函数 ==========
+  function getFileExtension(file: File): string {
+    return file.name.split('.').pop()?.toLowerCase() || '';
+  }
 
-            # 获取操作记录并统一计算库存数量
-            if inventory_id is not None and inventory_id in operation_index:
-                inv["操作记录"] = operation_index[inventory_id]
-                # 计算入库/出库/借/还数量
-                total_in = sum(op.get("操作数量", 0) for op in operation_index[inventory_id]
-                               if op.get("操作类型") == "入库")
-                total_out = sum(op.get("操作数量", 0) for op in operation_index[inventory_id]
-                                if op.get("操作类型") == "出库")
-                total_lend = sum(op.get("操作数量", 0) for op in operation_index[inventory_id]
-                                 if op.get("操作类型") == "借")
-                total_return = sum(op.get("操作数量", 0) for op in operation_index[inventory_id]
-                                   if op.get("操作类型") == "还")
+  /**
+   * 选择文件后缓存，展示待上传区域
+   */
+  async function handleFileSelect(e: Event & { target: HTMLInputElement }): Promise<void> {
+    const fileInput = e.target;
+    const file = fileInput.files?.[0];
+    fileInput.value = '';
 
-                # 统一计算当前库存
-                inv["累计入库数量"] = total_in
-                inv["累计出库数量"] = total_out
-                inv["累计借出数量"] = total_lend
-                inv["累计归还数量"] = total_return
-                inv["库存数量"] = total_in - total_out - total_lend + total_return
-            else:
-                inv["操作记录"] = []
-                inv["累计入库数量"] = 0
-                inv["累计出库数量"] = 0
-                inv["累计借出数量"] = 0
-                inv["累计归还数量"] = 0
-                inv["库存数量"] = inv.get("库存数量", 0)
+    if (!productCode || productCode.trim() === '') {
+      alert('错误：商品货号不能为空！');
+      return;
+    }
+    if (!file) return;
 
-            # 添加特征信息
-            inv["特征信息"] = feature_dict
+    const ext = getFileExtension(file);
+    if (!ALLOWED_FORMATS.includes(ext)) {
+      alert(`错误：仅支持上传 ${ALLOWED_FORMATS.join('、')} 格式的图片！`);
+      return;
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      alert('错误：图片大小不能超过16MB，请压缩后上传！');
+      return;
+    }
 
-            inventory_with_details.append(inv)
+    pendingFile = file;
+    pendingFilePreviewUrl = URL.createObjectURL(file);
+  }
 
-        return {
-            "status": "success",
-            "data": inventory_with_details
-        }, 200
+  /**
+   * 编辑按钮点击函数 - 后端中转文件（核心修改）
+   */
+  async function editPendingImage(e: MouseEvent): Promise<void> {
+    // 阻止冒泡和默认行为
+    e.stopPropagation();
+    e.preventDefault();
 
-    except Exception as e:
-        print(f"查询库存异常: {str(e)}")
-        return {"status": "error", "message": f"系统异常: {str(e)}"}, 500
+    // 基础校验
+    if (!pendingFile) {
+      alert('请先选择待上传的图片，再点击编辑！');
+      return;
+    }
+    if (isTempUploading) {
+      alert('正在上传临时图片，请稍候...');
+      return;
+    }
+
+    try {
+      isTempUploading = true;
+
+      // 1. 构建FormData（文件格式直接传给后端）
+      const formData = new FormData();
+      formData.append('image', pendingFile); // 文件字段
+      formData.append('productCode', productCode.trim()); // 可选：携带商品货号
+      formData.append('fileName', pendingFile.name); // 可选：携带文件名
+
+      // 2. 调用后端临时上传接口
+      const response = await fetch(TEMP_UPLOAD_API, {
+        method: 'POST',
+        body: formData,
+        credentials: 'include', // 保持会话（如需登录态）
+        headers: {
+          // 注意：FormData 不需要手动设置 Content-Type，浏览器会自动加 boundary
+          // 避免手动设置导致后端解析失败
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`临时上传失败 [${response.status}]：${response.statusText}`);
+      }
+
+      // 3. 解析后端返回的临时标识
+      const tempResult: TempUploadImageResponse = await response.json();
+      if (!tempResult.success || !tempResult.data?.tempImageId) {
+        throw new Error(tempResult.message || '临时上传失败，未获取到图片临时ID');
+      }
+
+      // 4. 跳转编辑页面（携带临时ID）
+      const tempImageId = tempResult.data.tempImageId;
+      const editorUrl = `${EDIT_IMAGE_URL}?tempImageId=${encodeURIComponent(tempImageId)}`;
+      window.open(editorUrl, '_blank');
+
+      // 可选：提示临时文件过期时间
+      if (tempResult.data.expireAt) {
+        console.log(`临时图片过期时间：${tempResult.data.expireAt}`);
+      }
+
+    } catch (err) {
+      const errorMsg = (err as Error).message || '临时上传失败';
+      console.error('【编辑跳转-临时上传错误】', err);
+      alert(`编辑跳转失败：${errorMsg}`);
+    } finally {
+      isTempUploading = false;
+    }
+  }
+  // ========== 新增：监听前端B传回的编辑后图片 ==========
+    onMount(() => {
+        // 监听跨窗口消息
+        const handleMessage = (e: MessageEvent) => {
+            // 安全校验：只接收指定来源的消息（生产环境替换为前端B的域名）
+            if (!e.origin.includes('localhost:5174')) return;
+
+            // 校验消息类型
+            if (e.data.type === 'EDITED_IMAGE') {
+                const { data: editedImage, fileName } = e.data;
+
+                // 情况1：如果传的是Blob（推荐）
+                if (editedImage instanceof Blob) {
+                    const editedFile = new File([editedImage], fileName, { type: editedImage.type });
+                    // 复用原有上传逻辑（直接调用confirmUpload前的处理）
+                    handleEditedFile(editedFile);
+                }
+
+                // 情况2：如果传的是Base64
+                // if (typeof editedImage === 'string' && editedImage.startsWith('data:image/')) {
+                //     fetch(editedImage)
+                //         .then(res => res.blob())
+                //         .then(blob => {
+                //             const editedFile = new File([blob], fileName, { type: blob.type });
+                //             handleEditedFile(editedFile);
+                //         });
+                // }
+            }
+        };
+
+        window.addEventListener('message', handleMessage);
+
+        // 组件销毁时移除监听
+        onDestroy(() => {
+            window.removeEventListener('message', handleMessage);
+        });
+    });
+
+    // ========== 新增：处理编辑后的文件 ==========
+    function handleEditedFile(file: File) {
+        // 缓存编辑后的文件，展示到待上传区域
+        pendingFile = file;
+        pendingFilePreviewUrl = URL.createObjectURL(file);
+        alert('已接收编辑后的图片，可点击「确认上传」入库！');
+    }
+
+  /**
+   * 确认上传（仅点击此按钮才入库）
+   */
+  async function confirmUpload(): Promise<void> {
+    if (!pendingFile) {
+      alert('未选中待上传的图片！');
+      return;
+    }
+
+    await uploadImage(pendingFile);
+    clearPendingFile();
+  }
+
+  /**
+   * 取消上传
+   */
+  function cancelUpload(): void {
+    clearPendingFile();
+  }
+
+  /**
+   * 清空待上传文件缓存
+   */
+  function clearPendingFile(): void {
+    if (pendingFilePreviewUrl) {
+      URL.revokeObjectURL(pendingFilePreviewUrl);
+      pendingFilePreviewUrl = '';
+    }
+    pendingFile = null;
+  }
+
+  /**
+   * 上传图片（仅confirmUpload调用）
+   */
+  async function uploadImage(file: File): Promise<void> {
+    if (!file || !productCode) {
+      alert('错误：没有待上传的图片或商品货号为空！');
+      return;
+    }
+
+    isUploading = true;
+    uploadProgress = 0;
+    imgLoadError = false;
+
+    try {
+      const progressInterval = setInterval(() => {
+        if (uploadProgress < 90) uploadProgress += 10;
+      }, 100);
+
+      const result = await api.uploadProductImage(
+        productCode.trim(),
+        file
+      ) as ApiSuccessResponse<UploadImageResponseData>;
+
+      clearInterval(progressInterval);
+      uploadProgress = 100;
+
+      if (result.status === 'success') {
+        const newValue = result.data?.relative_path?.trim() || '';
+        console.log('【上传入库成功】路径：', newValue);
+        dispatch('change', newValue);
+        value = newValue;
+        alert('图片上传入库成功！');
+      }
+    } catch (error) {
+      const errorMsg = handleApiError(error, '图片上传失败');
+      alert(`上传失败：${errorMsg}`);
+      console.error('【上传错误】', error);
+    } finally {
+      isUploading = false;
+      uploadProgress = 0;
+    }
+  }
+
+  /**
+   * 清除已上传图片
+   */
+  async function clearImage(): Promise<void> {
+    if (!safeValue || isDeleting || !productCode) return;
+
+    const confirmClear = confirm(`确认删除该图片吗？\n路径：${safeValue}\n删除后无法恢复！`);
+    if (!confirmClear) return;
+
+    try {
+      isDeleting = true;
+      const deleteParams: BatchDeleteImageRequest = {
+        featureIds: [],
+        imagePaths: [safeValue],
+        cleanCsv: true,
+        relatedProductIds: [productCode.trim()]
+      };
+
+      const response = await fetch(DELETE_IMAGE_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(deleteParams)
+      });
+
+      if (!response.ok) throw new Error(`删除失败：${response.status}`);
+      const result: BatchDeleteImageResponse = await response.json();
+
+      if (result.status === 'error') throw new Error(result.message);
+      if (result.status === 'partial_success') {
+        const failDetail = result.details.find(d => d.status === 'fail');
+        alert(failDetail ? `部分失败：${failDetail.message}` : '删除成功！');
+      } else {
+        alert('图片删除成功！');
+      }
+
+      dispatch('change', '');
+      value = '';
+      previewUrlCache = '';
+      imgLoadError = false;
+    } catch (error) {
+      const errorMsg = handleApiError(error, '图片删除失败');
+      alert(`清除失败：${errorMsg}`);
+    } finally {
+      isDeleting = false;
+    }
+  }
+
+  /**
+   * 生成已上传图片预览URL
+   */
+  function getPreviewUrl(): string {
+    if (!safeValue) return '';
+
+    try {
+      const pathStr = safeValue;
+      if (pathStr.startsWith('http://') || pathStr.startsWith('https://')) {
+        previewUrlCache = pathStr;
+        debugPreviewUrl = pathStr;
+        return previewUrlCache;
+      }
+
+      let safePath = pathStr.startsWith('image/') ? pathStr : `image/${pathStr}`;
+      const encodedPath = encodeURIComponent(safePath).replace(/%2F/g, '/');
+      previewUrlCache = `${IMAGE_API_BASE}?path=${encodedPath}`;
+      debugPreviewUrl = previewUrlCache;
+
+      return previewUrlCache;
+    } catch (error) {
+      console.error('【预览URL错误】', error);
+      imgLoadError = true;
+      return ERROR_PLACEHOLDER;
+    }
+  }
+
+  /**
+   * 处理图片加载错误
+   */
+  function handleImgError(e: ErrorEvent<HTMLImageElement>): void {
+    imgLoadError = true;
+    if (e.target?.src !== ERROR_PLACEHOLDER && !e.target?.src.startsWith('blob:')) {
+      e.target.src = ERROR_PLACEHOLDER;
+    }
+  }
+
+  // ========== 响应式状态 ==========
+  $: hasValidPath = Boolean(safeValue && safeValue.trim() !== '');
+  $: combinedDisabled = disabled || !productCode || isUploading || isDeleting || isTempUploading;
+  $: showUploadedSection = hasValidPath && !isUploading;
+  $: showPendingSection = Boolean(pendingFile && pendingFilePreviewUrl);
+
+  $: if (hasValidPath) {
+    imgLoadError = false;
+    getPreviewUrl();
+  }
+
+  // ========== 组件销毁清理 ==========
+  onDestroy(() => {
+    if (previewUrlCache && previewUrlCache.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrlCache);
+    }
+    if (pendingFilePreviewUrl && pendingFilePreviewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(pendingFilePreviewUrl);
+    }
+  });
+</script>
+
+<div class="image-upload-container">
+  <!-- 1. 文件选择区域 -->
+  <div class="upload-section">
+    <input
+      type="file"
+      accept="image/png, image/jpg, image/jpeg, image/gif, image/bmp, image/webp"
+      on:change={handleFileSelect}
+      class="upload-input"
+      disabled={combinedDisabled}
+    />
+
+    {#if !productCode && !disabled}
+      <p class="warning-text">⚠️ 请先填写商品货号</p>
+    {/if}
+  </div>
+
+  <!-- 2. 待上传图片区域 -->
+  {#if showPendingSection}
+    <div class="pending-section">
+      <div class="pending-header">
+        <span class="pending-title">待上传图片</span>
+      </div>
+      <div class="pending-body">
+        <!-- 待上传图片预览 -->
+        <div class="pending-preview">
+          <img
+            src={pendingFilePreviewUrl}
+            alt="待上传图片预览"
+            class="pending-preview-img"
+            on:error={handleImgError}
+          />
+        </div>
+        <!-- 文件信息 -->
+        <div class="pending-file-info">
+          <p><strong>文件名：</strong>{pendingFile?.name}</p>
+          <p><strong>大小：</strong>{pendingFile ? (pendingFile.size / 1024 / 1024).toFixed(2) + ' MB' : '-'}</p>
+          <p><strong>格式：</strong>{pendingFile ? getFileExtension(pendingFile).toUpperCase() : '-'}</p>
+          <p><strong>商品货号：</strong>{productCode}</p>
+        </div>
+        <!-- 操作按钮：编辑按钮跳转到指定地址 -->
+        <div class="pending-actions">
+          <button
+            type="button"
+            class="edit-btn"
+            on:click={editPendingImage}
+            disabled={combinedDisabled || isUploading || isTempUploading}
+            title="编辑图片"
+          >
+            {isTempUploading ? '上传中...' : '✏️ 编辑图片'}
+          </button>
+          <button
+            type="button"
+            class="confirm-upload-btn"
+            on:click={confirmUpload}
+            disabled={combinedDisabled || isUploading}
+            title="确认上传"
+          >
+            {isUploading ? '上传中...' : '✅ 确认上传'}
+          </button>
+          <button
+            type="button"
+            class="cancel-btn"
+            on:click={cancelUpload}
+            disabled={isUploading || isTempUploading}
+            title="取消上传"
+          >
+            ❌ 取消
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- 3. 上传中状态 -->
+  {#if isUploading}
+    <div class="uploading-section">
+      <div class="progress-container">
+        <div class="progress-bar" style="width: {uploadProgress}%"></div>
+        <div class="progress-text">{uploadProgress}%</div>
+      </div>
+      <p class="uploading-text">正在上传图片...</p>
+    </div>
+  {/if}
+
+  <!-- 4. 已上传图片区域 -->
+  {#if showUploadedSection}
+    <div class="path-section">
+      <div class="path-header">
+        <label class="path-label">路径：</label>
+        <button
+          type="button"
+          class="clear-btn"
+          on:click={clearImage}
+          disabled={isDeleting || !hasValidPath}
+          title="删除图片并清空路径"
+        >
+          {isDeleting ? '删除中...' : '🗑️ 清除'}
+        </button>
+      </div>
+      <input
+        type="text"
+        value={safeValue}
+        readonly
+        class="path-input"
+        title="点击复制路径"
+        on:click={(e) => e.target.select()}
+      />
+      <div class="debug-text">
+        预览URL：{debugPreviewUrl || '未生成'}
+      </div>
+    </div>
+
+    <div class="preview-wrapper">
+      <img
+        src={getPreviewUrl() || ERROR_PLACEHOLDER}
+        alt="商品图片预览"
+        class="preview-img"
+        on:error={handleImgError}
+        title="商品图片预览"
+      />
+      <p class="preview-text">
+        <span class="preview-tip">已上传图片预览</span>
+      </p>
+    </div>
+  {/if}
+</div>
+
+<style>
+  .image-upload-container {
+    margin: 4px 0;
+    width: 100%;
+    font-size: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .upload-section {
+    width: 100%;
+  }
+
+  .upload-input {
+    padding: 4px 6px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    cursor: pointer;
+    width: 100%;
+    background-color: white;
+    font-size: 10px;
+    height: 30px;
+  }
+
+  .upload-input:disabled {
+    cursor: not-allowed;
+    background-color: #f5f5f5;
+    opacity: 0.6;
+  }
+
+  /* 待上传图片区域样式 */
+  .pending-section {
+    padding: 8px;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    background-color: #fafafa;
+  }
+
+  .pending-header {
+    margin-bottom: 6px;
+    border-bottom: 1px dashed #eee;
+    padding-bottom: 4px;
+  }
+
+  .pending-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: #333;
+  }
+
+  .pending-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .pending-preview {
+    text-align: center;
+  }
+
+  .pending-preview-img {
+    max-width: 120px;
+    max-height: 100px;
+    border: 1px solid #ced4da;
+    border-radius: 3px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .pending-file-info {
+    font-size: 9px;
+    color: #666;
+    padding: 4px;
+    background-color: #f9f9f9;
+    border-radius: 3px;
+  }
+
+  .pending-file-info p {
+    margin: 2px 0;
+  }
+
+  .pending-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  /* 编辑按钮样式 */
+  .edit-btn {
+    padding: 3px 8px;
+    background-color: #2196f3;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 9px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .edit-btn:hover:not(:disabled) {
+    background-color: #1976d2;
+  }
+
+  .edit-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* 确认上传按钮 */
+  .confirm-upload-btn {
+    padding: 3px 8px;
+    background-color: #4caf50;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 9px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .confirm-upload-btn:hover:not(:disabled) {
+    background-color: #43a047;
+  }
+
+  .confirm-upload-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* 取消按钮 */
+  .cancel-btn {
+    padding: 3px 8px;
+    background-color: #ff9800;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 9px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .cancel-btn:hover:not(:disabled) {
+    background-color: #f57c00;
+  }
+
+  .cancel-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* 上传中状态样式 */
+  .uploading-section {
+    margin: 4px 0;
+    padding: 8px;
+    border: 1px solid #2196f3;
+    border-radius: 4px;
+    background-color: #e3f2fd;
+  }
+
+  .progress-container {
+    position: relative;
+    height: 20px;
+    background-color: #eee;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 6px;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background-color: #4caf50;
+    transition: width 0.3s ease;
+  }
+
+  .progress-text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: bold;
+    color: #333;
+  }
+
+  .uploading-text {
+    font-size: 9px;
+    color: #2196f3;
+    text-align: center;
+    margin: 0;
+  }
+
+  /* 已上传路径区域样式 */
+  .path-section {
+    margin: 2px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    align-items: flex-start;
+    width: 100%;
+  }
+
+  .path-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .path-label {
+    font-weight: 500;
+    color: #555;
+    font-size: 10px;
+    min-width: 40px;
+  }
+
+  /* 清除按钮样式 */
+  .clear-btn {
+    padding: 2px 8px;
+    background-color: #ff4444;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 9px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+  }
+
+  .clear-btn:hover:not(:disabled) {
+    background-color: #cc0000;
+  }
+
+  .clear-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .path-input {
+    width: 100%;
+    padding: 2px 4px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    background-color: #f9f9f9;
+    font-size: 9px;
+    color: #333;
+    cursor: text;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    height: 24px;
+  }
+
+  .path-input:focus {
+    outline: none;
+    border-color: #3498db;
+    background-color: #fff;
+  }
+
+  .debug-text {
+    font-size: 8px;
+    color: #999;
+    margin-top: 2px;
+    word-break: break-all;
+    width: 100%;
+  }
+
+  .warning-text {
+    color: #ff6b6b;
+    font-size: 9px;
+    margin: 2px 0 0 0;
+    padding-left: 2px;
+    line-height: 1.2;
+  }
+
+  /* 已上传图片预览区域 */
+  .preview-wrapper {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px dashed #dee2e6;
+    width: 100%;
+  }
+
+  .preview-img {
+    max-width: 100px;
+    max-height: 80px;
+    border: 1px solid #ced4da;
+    border-radius: 3px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .preview-text {
+    font-size: 9px;
+    color: #666;
+    margin: 2px 0 0 0;
+  }
+
+  .preview-tip {
+    color: #999;
+  }
+</style>

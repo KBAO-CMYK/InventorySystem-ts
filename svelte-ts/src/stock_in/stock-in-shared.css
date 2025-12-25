@@ -1,0 +1,498 @@
+/* 全局基础样式 - 仅作用于 .stock-in-container 内部 */
+.stock-in-container * {
+  box-sizing: border-box;
+}
+
+/* 所有 StockIn 组件样式都嵌套在 .stock-in-container 下 */
+.stock-in-container .tab-nav {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #e0e0e0;
+  padding-bottom: 6px;
+}
+
+.stock-in-container .tab-nav button {
+  padding: 8px 16px;
+  background: #f8f9fa;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6c757d;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.stock-in-container .tab-nav button:hover {
+  background: #e9ecef;
+  color: #495057;
+}
+
+.stock-in-container .tab-nav button.active {
+  background: #3498db;
+  color: white;
+}
+
+.stock-in-container .form-section {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 6px;
+}
+
+.stock-in-container .form-section h2 {
+  color: #2c3e50;
+  margin-bottom: 8px;
+  font-size: 1.2rem;
+}
+
+.stock-in-container .form-section h3 {
+  color: #34495e;
+  margin: 8px 0 6px 0;
+  font-size: 1rem;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 4px;
+}
+
+.stock-in-container .help-text {
+  color: #6c757d;
+  font-size: 11px;
+  margin-bottom: 8px;
+  line-height: 1.3;
+}
+
+/* 表单组样式 */
+.stock-in-container .form-group {
+  margin-bottom: 8px;
+}
+
+.stock-in-container label {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 500;
+  color: #555;
+  font-size: 11px;
+}
+
+/* 核心紧凑布局 */
+.stock-in-container .form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+  align-items: start;
+}
+
+/* 紧凑行 - 用于需要多列紧凑排列的行 */
+.stock-in-container .compact-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+/* 输入框和选择框 */
+.stock-in-container input,
+.stock-in-container select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 11px;
+  transition: border-color 0.2s ease;
+  box-sizing: border-box;
+  min-height: 30px;
+  background: white;
+}
+
+.stock-in-container input:focus,
+.stock-in-container select:focus {
+  outline: none;
+  border-color: #3498db;
+  box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+}
+
+/* 按钮样式 */
+.stock-in-container .btn-primary {
+  background: #3498db;
+  color: white;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 12px;
+  display: block;
+  width: 100%;
+}
+
+.stock-in-container .btn-primary:hover:not(:disabled) {
+  background: #2980b9;
+}
+
+.stock-in-container .btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.stock-in-container .btn-default {
+  background: #6c757d;
+  color: white;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.stock-in-container .btn-default:hover {
+  background: #5a6268;
+}
+
+.stock-in-container .btn-danger {
+  background: #dc3545;
+  color: white;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.stock-in-container .btn-danger:hover {
+  background: #c82333;
+}
+
+/* 复选框样式 */
+.stock-in-container .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: normal;
+  cursor: pointer;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+
+.stock-in-container .checkbox-label.compact {
+  padding: 3px 5px;
+  border: 1px solid #e0e0e0;
+  border-radius: 3px;
+  transition: all 0.2s ease;
+  margin-bottom: 4px;
+  font-size: 10px;
+}
+
+.stock-in-container .checkbox-label.compact:hover {
+  background: #f8f9fa;
+  border-color: #3498db;
+}
+
+.stock-in-container .checkbox-label.compact input {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  min-height: auto;
+}
+
+.stock-in-container .inline-checkbox {
+  display: inline-block;
+  margin-right: 12px;
+}
+
+/* 差异化字段网格 */
+.stock-in-container .variable-fields-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+/* 多特征入库专用样式 */
+.stock-in-container .multi-feature-form .section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.stock-in-container .header-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.stock-in-container .combination-count {
+  color: #3498db;
+  font-weight: 500;
+  font-size: 11px;
+}
+
+/* 特征组合表格 - 适配图片列宽度 */
+.stock-in-container .feature-variations-table {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.stock-in-container .feature-variations-table .table-header {
+  background: #f8f9fa;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+/* 表格列宽优化，新增图片列 */
+.stock-in-container .feature-variations-table .row {
+  display: grid;
+  grid-template-columns: 60px 60px 80px 80px 80px 80px 80px 50px 100px 40px;
+  gap: 1px;
+  background: #f8f9fa;
+  width: 100%;
+}
+
+.stock-in-container .feature-variations-table .row:not(:last-child) {
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.stock-in-container .feature-variations-table .cell {
+  padding: 4px;
+  background: white;
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  box-sizing: border-box;
+  font-size: 11px;
+}
+
+.stock-in-container .feature-variations-table .cell.quantity {
+  width: 50px;
+}
+
+.stock-in-container .feature-variations-table .cell.actions {
+  width: 40px;
+  justify-content: center;
+}
+
+.stock-in-container .feature-variations-table .table-body .row {
+  background: white;
+}
+
+.stock-in-container .feature-variations-table .table-body .row:hover {
+  background: #f8f9fa;
+}
+
+.stock-in-container .feature-variations-table .table-body input {
+  width: 100%;
+  padding: 3px 5px;
+  font-size: 10px;
+  min-height: 24px;
+}
+
+.stock-in-container .feature-variations-table .table-footer {
+  padding: 6px;
+  background: #f8f9fa;
+  border-top: 1px solid #e0e0e0;
+}
+
+.stock-in-container .total-summary {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: #34495e;
+}
+
+.stock-in-container .summary-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 单号/连号入库表格样式 */
+.stock-in-container .batch-variations-table {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.stock-in-container .batch-variations-table .table-header {
+  background: #f8f9fa;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.stock-in-container .batch-variations-table .row {
+  display: grid;
+  grid-template-columns: 100px repeat(auto-fill, minmax(120px, 1fr));
+  gap: 1px;
+  background: #f8f9fa;
+  width: 100%;
+}
+
+.stock-in-container .batch-variations-table .cell {
+  padding: 4px;
+  background: white;
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  box-sizing: border-box;
+  font-size: 11px;
+}
+
+.stock-in-container .batch-variations-table .cell.product-code {
+  font-weight: 500;
+  color: #2c3e50;
+  padding-left: 8px;
+}
+
+.stock-in-container .batch-variations-table .cell.variable-field {
+  width: 100%;
+}
+
+.stock-in-container .batch-variations-table .table-body .row {
+  background: white;
+}
+
+.stock-in-container .batch-variations-table .table-body .row:hover {
+  background: #f8f9fa;
+}
+
+.stock-in-container .batch-variations-table .table-body input {
+  width: 100%;
+  padding: 3px 5px;
+  font-size: 10px;
+  min-height: 24px;
+}
+
+/* 输入框+按钮组合样式 */
+.stock-in-container .input-with-button {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  width: 100%;
+}
+
+.stock-in-container .input-with-button input {
+  flex: 1;
+  min-width: 0;
+}
+
+.stock-in-container .input-with-button .btn-default {
+  white-space: nowrap;
+  padding: 4px 6px;
+  font-size: 9px;
+  height: 30px;
+}
+
+/* 默认值提示样式 */
+.stock-in-container .default-hint {
+  font-size: 9px;
+  color: #6c757d;
+  margin-top: 2px;
+  font-style: italic;
+}
+
+/* 批量填充按钮样式 */
+.stock-in-container .btn-quick-fill {
+  background: #28a745;
+  color: white;
+  border: none;
+  border-radius: 2px;
+  padding: 2px 4px;
+  font-size: 9px;
+  cursor: pointer;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+.stock-in-container .btn-quick-fill:hover {
+  background: #218838;
+}
+
+/* 图片上传组件适配样式 */
+.stock-in-container .ImageUpload {
+  width: 100%;
+}
+
+.stock-in-container .ImageUpload input {
+  font-size: 9px;
+  padding: 2px 4px;
+}
+
+/* 响应式适配 - 仅作用于 .stock-in-container 内部 */
+@media (max-width: 1200px) {
+  .stock-in-container .compact-row {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .stock-in-container .feature-variations-table .row {
+    grid-template-columns: 50px 50px 70px 70px 70px 70px 70px 40px 90px 35px;
+  }
+}
+
+@media (max-width: 992px) {
+  .stock-in-container .compact-row {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .stock-in-container .feature-variations-table .row {
+    grid-template-columns: 45px 45px 60px 60px 60px 60px 60px 35px 80px 30px;
+  }
+
+  .stock-in-container .batch-variations-table .row {
+    grid-template-columns: 80px repeat(auto-fill, minmax(100px, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .stock-in-container .compact-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .stock-in-container .feature-variations-table .row {
+    grid-template-columns: 40px 40px 50px 50px 50px 50px 50px 30px 70px 25px;
+  }
+
+  .stock-in-container .total-summary {
+    flex-direction: column;
+    gap: 4px;
+  }
+}
+
+@media (max-width: 576px) {
+  .stock-in-container .compact-row {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-in-container .tab-nav {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .stock-in-container .feature-variations-table .row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+
+  .stock-in-container .feature-variations-table .cell {
+    flex: 1 1 calc(50% - 2px);
+    min-width: 80px;
+  }
+
+  .stock-in-container .batch-variations-table .row {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .stock-in-container .batch-variations-table .cell {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+}

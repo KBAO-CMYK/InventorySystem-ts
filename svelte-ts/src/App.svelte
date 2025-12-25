@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import StockIn from './StockIn.svelte'
+  //import StockIn from './StockIn.svelte'
+  import StockIn from './stock_in/ProductStockIn.svelte'
   import InventoryManagement from './InventoryManagement.svelte'
   import StockOutRecords from './Records.svelte'
   // 适配 api.ts 导入（注意后缀改为 .ts，若项目配置了路径别名可保持不变）

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api } from './lib/api.js'
   import { onMount } from 'svelte'
-  import BatchOperations from './BatchOperations.svelte'
+  import BatchOperations from './modals/BatchOperations.svelte'
   import EditModal from './modals/EditModal.svelte'
   import DeleteModal from './modals/DeleteModal.svelte'
   import InventoryDetailModal from './modals/InventoryDetailModal.svelte'

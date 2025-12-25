@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { ApiInstance, ApiErrorHandler } from './lib/api.js'; // 假设api有类型声明，无则声明为any
-  import { api, handleApiError } from './lib/api.js'
+  import type { ApiInstance, ApiErrorHandler } from './lib/api.ts'; // 假设api有类型声明，无则声明为any
+  import { api, handleApiError } from './lib/api.ts'
   import { onMount } from 'svelte'
 
   // ========== 核心接口定义 ==========

@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { createEventDispatcher, onDestroy } from 'svelte';
+  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
   import { api, handleApiError } from '../lib/api.ts';
   import type { ApiSuccessResponse } from '../lib/api.ts';
+  // 导入网络常量
+  import { NETWORK_CONSTANTS, UPLOAD_CONSTANTS } from '../lib/constants.ts';
 
   // ========== 类型定义 ==========
   interface UploadImageResponseData {
@@ -9,7 +11,6 @@
     [key: string]: any;
   }
 
-  // 🔥 新增：删除接口相关类型
   interface BatchDeleteImageRequest {
     featureIds: string[];
     imagePaths: string[];
@@ -36,6 +37,16 @@
     }>;
   }
 
+  // 新增：临时上传接口返回类型
+  interface TempUploadImageResponse {
+    success: boolean;
+    data: {
+      tempImageId: string; // 后端返回的临时图片标识
+      expireAt?: string; // 可选：临时文件过期时间
+    };
+    message: string;
+  }
+
   type ImageUploadEvents = {
     change: string;
   };
@@ -47,27 +58,19 @@
   export let value: string | CustomEvent<string> | Record<string, any> = '';
   export let productCode: string = '';
   export let disabled: boolean = false;
-  // 🔥 新增：特征ID（用于删除接口，外部传入）
   export let featureId: string | number = '';
-
-  // ========== 核心配置 ==========
-  const IMAGE_API_BASE: string = 'http://127.0.0.1:5000/api/get_image';
-  const IMAGE_STATIC_BASE: string = 'http://127.0.0.1:5000/image';
-  // 🔥 新增：删除接口地址
-  const DELETE_IMAGE_API: string = 'http://127.0.0.1:5000/api/batch_delete_image';
-  const ERROR_PLACEHOLDER: string = 'https://picsum.photos/40/40?grayscale&text=无图';
-  const ALLOWED_FORMATS: readonly string[] = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'];
-  const MAX_FILE_SIZE: number = 16 * 1024 * 1024;
 
   // ========== 状态变量 ==========
   let previewUrlCache: string = '';
   let imgLoadError: boolean = false;
   let debugPreviewUrl: string = '';
-  let isModalOpen: boolean = false;
-  let isUploading: boolean = false; // 上传状态
-  let uploadProgress: number = 0; // 上传进度
-  // 🔥 新增：删除状态
+  let isUploading: boolean = false;
+  let uploadProgress: number = 0;
   let isDeleting: boolean = false;
+  let pendingFile: File | null = null;
+  let pendingFilePreviewUrl: string = '';
+  // 新增：临时上传状态
+  let isTempUploading: boolean = false;
 
   // ========== 响应式处理 ==========
   $: safeValue = (() => {
@@ -86,45 +89,172 @@
   }
 
   /**
-   * 🔥 修改：处理文件选择 - 直接上传（无需确认）
+   * 选择文件后缓存，展示待上传区域
    */
   async function handleFileSelect(e: Event & { target: HTMLInputElement }): Promise<void> {
     const fileInput = e.target;
     const file = fileInput.files?.[0];
-
-    // 重置输入框值（避免重复选择同文件不触发change）
     fileInput.value = '';
 
-    // 校验商品货号
     if (!productCode || productCode.trim() === '') {
       alert('错误：商品货号不能为空！');
       return;
     }
+    if (!file) return;
 
-    // 校验文件
-    if (!file) {
-      return;
-    }
-
-    // 校验格式
     const ext = getFileExtension(file);
-    if (!ALLOWED_FORMATS.includes(ext)) {
-      alert(`错误：仅支持上传 ${ALLOWED_FORMATS.join('、')} 格式的图片！`);
+    // 使用常量中的允许格式
+    if (!UPLOAD_CONSTANTS.ALLOWED_FORMATS.includes(ext)) {
+      alert(`错误：仅支持上传 ${UPLOAD_CONSTANTS.ALLOWED_FORMATS.join('、')} 格式的图片！`);
+      return;
+    }
+    // 使用常量中的最大文件大小
+    if (file.size > UPLOAD_CONSTANTS.MAX_FILE_SIZE) {
+      alert(`错误：图片大小不能超过${UPLOAD_CONSTANTS.MAX_FILE_SIZE / 1024 / 1024}MB，请压缩后上传！`);
       return;
     }
 
-    // 校验大小
-    if (file.size > MAX_FILE_SIZE) {
-      alert('错误：图片大小不能超过16MB，请压缩后上传！');
-      return;
-    }
-
-    // 直接触发上传
-    await uploadImage(file);
+    pendingFile = file;
+    pendingFilePreviewUrl = URL.createObjectURL(file);
   }
 
   /**
-   * 🔥 修改：直接上传图片（无需确认）
+   * 编辑按钮点击函数 - 后端中转文件（核心修改）
+   */
+  async function editPendingImage(e: MouseEvent): Promise<void> {
+    e.stopPropagation();
+    e.preventDefault();
+
+    // 基础校验
+    if (!pendingFile) {
+      alert('请先选择待上传的图片，再点击编辑！');
+      return;
+    }
+    if (isUploading) {
+      alert('正在上传图片，请稍候...');
+      return;
+    }
+
+    try {
+      // 1. 打开前端B窗口（使用常量中的编辑页面地址）
+      const EDITOR_ORIGIN = NETWORK_CONSTANTS.EDIT_IMAGE_URL.replace(/\/$/, ''); // 去除末尾斜杠
+      const editorWindow = window.open(NETWORK_CONSTANTS.EDIT_IMAGE_URL, '_blank');
+
+      if (!editorWindow) {
+        throw new Error('无法打开编辑窗口，请检查浏览器弹窗设置！');
+      }
+
+      // 2. 等待前端B发送「就绪」消息（双向确认，避免依赖跨域窗口属性）
+      const waitForEditorReady = new Promise((resolve, reject) => {
+        const readyListener = (e: MessageEvent) => {
+          // 仅接收前端B的就绪消息（校验origin，用includes兼容端口）
+          if (!e.origin.includes(EDITOR_ORIGIN)) return;
+          if (e.data.type === 'EDITOR_READY') {
+            window.removeEventListener('message', readyListener);
+            resolve(true);
+          }
+        };
+        window.addEventListener('message', readyListener);
+
+        // 使用常量中的超时时间
+        setTimeout(() => {
+          window.removeEventListener('message', readyListener);
+          reject(new Error('编辑窗口就绪超时，请检查前端B是否正常运行'));
+        }, UPLOAD_CONSTANTS.EDITOR_READY_TIMEOUT);
+      });
+
+      // 等待前端B就绪
+      await waitForEditorReady;
+
+      // 3. 发送图片消息（关键：targetOrigin用固定地址，不是editorWindow.origin）
+      editorWindow.postMessage(
+        {
+          type: 'PENDING_IMAGE', // 消息类型，前端B据此识别
+          data: pendingFile,     // 直接传File/Blob
+          fileName: pendingFile.name,
+          productCode: productCode.trim()
+        },
+        EDITOR_ORIGIN // 固定前端B的地址，避免动态读取跨域窗口的origin
+      );
+
+      console.log('图片消息已发送到前端B（跨域安全模式）');
+
+    } catch (err) {
+      const errorMsg = (err as Error).message || '传递图片给编辑窗口失败';
+      console.error('【编辑跳转-跨域错误】', err);
+      alert(`编辑跳转失败：${errorMsg}`);
+    }
+  }
+
+  // ========== 新增：监听前端B传回的编辑后图片 ==========
+  onMount(() => {
+    // 监听跨窗口消息
+    const handleMessage = (e: MessageEvent) => {
+      // 安全校验：只接收指定来源的消息（生产环境替换为前端B的域名）
+      if (!e.origin.includes(':5174')) return;
+
+      // 校验消息类型
+      if (e.data.type === 'EDITED_IMAGE') {
+        const { data: editedImage, fileName } = e.data;
+
+        // 情况1：如果传的是Blob（推荐）
+        if (editedImage instanceof Blob) {
+          const editedFile = new File([editedImage], fileName, { type: editedImage.type });
+          // 复用原有上传逻辑（直接调用confirmUpload前的处理）
+          handleEditedFile(editedFile);
+        }
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+
+    // 组件销毁时移除监听
+    onDestroy(() => {
+      window.removeEventListener('message', handleMessage);
+    });
+  });
+
+  // ========== 新增：处理编辑后的文件 ==========
+  function handleEditedFile(file: File) {
+    // 缓存编辑后的文件，展示到待上传区域
+    pendingFile = file;
+    pendingFilePreviewUrl = URL.createObjectURL(file);
+    alert('已接收编辑后的图片，可点击「确认上传」入库！');
+  }
+
+  /**
+   * 确认上传（仅点击此按钮才入库）
+   */
+  async function confirmUpload(): Promise<void> {
+    if (!pendingFile) {
+      alert('未选中待上传的图片！');
+      return;
+    }
+
+    await uploadImage(pendingFile);
+    clearPendingFile();
+  }
+
+  /**
+   * 取消上传
+   */
+  function cancelUpload(): void {
+    clearPendingFile();
+  }
+
+  /**
+   * 清空待上传文件缓存
+   */
+  function clearPendingFile(): void {
+    if (pendingFilePreviewUrl) {
+      URL.revokeObjectURL(pendingFilePreviewUrl);
+      pendingFilePreviewUrl = '';
+    }
+    pendingFile = null;
+  }
+
+  /**
+   * 上传图片（仅confirmUpload调用）
    */
   async function uploadImage(file: File): Promise<void> {
     if (!file || !productCode) {
@@ -132,20 +262,15 @@
       return;
     }
 
-    // 重置上传状态
     isUploading = true;
     uploadProgress = 0;
     imgLoadError = false;
 
     try {
-      // 模拟上传进度（实际API若支持可替换为真实进度）
       const progressInterval = setInterval(() => {
-        if (uploadProgress < 90) {
-          uploadProgress += 10;
-        }
+        if (uploadProgress < 90) uploadProgress += 10;
       }, 100);
 
-      // 调用上传API
       const result = await api.uploadProductImage(
         productCode.trim(),
         file
@@ -156,18 +281,15 @@
 
       if (result.status === 'success') {
         const newValue = result.data?.relative_path?.trim() || '';
-        console.log('【上传成功】返回的图片路径：', newValue);
-
-        // 派发事件并更新value
+        console.log('【上传入库成功】路径：', newValue);
         dispatch('change', newValue);
         value = newValue;
-
-        alert('图片上传成功！');
+        alert('图片上传入库成功！');
       }
     } catch (error) {
       const errorMsg = handleApiError(error, '图片上传失败');
       alert(`上传失败：${errorMsg}`);
-      console.error('【上传错误详情】', error);
+      console.error('【上传错误】', error);
     } finally {
       isUploading = false;
       uploadProgress = 0;
@@ -175,27 +297,16 @@
   }
 
   /**
-   * 🔥 新增：清除图片（删除文件 + 清空路径）
+   * 清除已上传图片
    */
   async function clearImage(): Promise<void> {
-    if (!safeValue || isDeleting || !productCode) {
-      console.warn('【清除图片】前置校验失败', {
-        hasPath: !!safeValue,
-        isDeleting,
-        productCode
-      });
-      return;
-    }
+    if (!safeValue || isDeleting || !productCode) return;
 
-    const confirmClear = confirm(
-      `确认删除该图片吗？\n路径：${safeValue}\n删除后无法恢复！`
-    );
+    const confirmClear = confirm(`确认删除该图片吗？\n路径：${safeValue}\n删除后无法恢复！`);
     if (!confirmClear) return;
 
     try {
       isDeleting = true;
-
-      // 构建删除请求参数（复用批量删除接口）
       const deleteParams: BatchDeleteImageRequest = {
         featureIds: [],
         imagePaths: [safeValue],
@@ -203,90 +314,60 @@
         relatedProductIds: [productCode.trim()]
       };
 
-      console.log('【清除图片】调用删除接口，参数：', deleteParams);
-
-      // 调用删除接口
-      const response = await fetch(DELETE_IMAGE_API, {
+      const response = await fetch(NETWORK_CONSTANTS.DELETE_IMAGE_API, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
+        headers: { 'Content-Type': NETWORK_CONSTANTS.CONTENT_TYPE_JSON },
         credentials: 'include',
         body: JSON.stringify(deleteParams)
       });
 
-      if (!response.ok) {
-        throw new Error(`删除请求失败：${response.status} ${response.statusText}`);
-      }
-
+      if (!response.ok) throw new Error(`删除失败：${response.status}`);
       const result: BatchDeleteImageResponse = await response.json();
-      console.log('【清除图片】删除响应：', result);
 
-      if (result.status === 'error') {
-        throw new Error(result.message || '图片删除失败');
-      } else if (result.status === 'partial_success') {
+      if (result.status === 'error') throw new Error(result.message);
+      if (result.status === 'partial_success') {
         const failDetail = result.details.find(d => d.status === 'fail');
-        if (failDetail) {
-          alert(`⚠️ 部分处理失败：${failDetail.message}\n成功：${result.success_count}个 | 失败：${result.fail_count}个`);
-        } else {
-          alert(`✅ 图片删除成功！\n${result.message}`);
-        }
+        alert(failDetail ? `部分失败：${failDetail.message}` : '删除成功！');
       } else {
-        alert(`✅ 图片删除成功！\n${result.message}`);
+        alert('图片删除成功！');
       }
 
-      // 清空路径并派发事件
       dispatch('change', '');
       value = '';
       previewUrlCache = '';
       imgLoadError = false;
-
     } catch (error) {
       const errorMsg = handleApiError(error, '图片删除失败');
       alert(`清除失败：${errorMsg}`);
-      console.error('【清除图片错误详情】', error);
     } finally {
       isDeleting = false;
     }
   }
 
   /**
-   * 生成图片预览URL
+   * 生成已上传图片预览URL
    */
   function getPreviewUrl(): string {
-    if (!safeValue) {
-      console.log('【URL生成】路径为空');
-      return '';
-    }
+    if (!safeValue) return '';
 
     try {
       const pathStr = safeValue;
-      console.log('【URL生成】原始路径：', pathStr);
-
-      // 已经是完整的HTTP/HTTPS URL
       if (pathStr.startsWith('http://') || pathStr.startsWith('https://')) {
         previewUrlCache = pathStr;
         debugPreviewUrl = pathStr;
         return previewUrlCache;
       }
 
-      // 补全image/前缀
-      let safePath = pathStr;
-      if (!safePath.startsWith('image/')) {
-        safePath = `image/${safePath}`;
-      }
-
-      // 使用专用图片接口
+      let safePath = pathStr.startsWith('image/') ? pathStr : `image/${pathStr}`;
       const encodedPath = encodeURIComponent(safePath).replace(/%2F/g, '/');
-      previewUrlCache = `${IMAGE_API_BASE}?path=${encodedPath}`;
+      previewUrlCache = `${NETWORK_CONSTANTS.IMAGE_API_BASE}?path=${encodedPath}`;
       debugPreviewUrl = previewUrlCache;
 
       return previewUrlCache;
     } catch (error) {
-      console.error('【URL生成错误】', error);
+      console.error('【预览URL错误】', error);
       imgLoadError = true;
-      return ERROR_PLACEHOLDER;
+      return NETWORK_CONSTANTS.ERROR_PLACEHOLDER;
     }
   }
 
@@ -295,50 +376,17 @@
    */
   function handleImgError(e: ErrorEvent<HTMLImageElement>): void {
     imgLoadError = true;
-    console.error('【图片加载失败】', {
-      targetSrc: e.target?.src,
-      safeValue: safeValue,
-      debugPreviewUrl: debugPreviewUrl
-    });
-
-    if (e.target?.src !== ERROR_PLACEHOLDER && !e.target?.src.startsWith('blob:')) {
-      e.target.src = ERROR_PLACEHOLDER;
-    }
-  }
-
-  /**
-   * 打开图片预览弹窗
-   */
-  function openImageModal(): void {
-    const imgUrl = getPreviewUrl();
-    if (!imgUrl || imgUrl === ERROR_PLACEHOLDER) {
-      alert('图片路径无效，无法预览！');
-      return;
-    }
-    isModalOpen = true;
-    document.body.style.overflow = 'hidden';
-  }
-
-  /**
-   * 关闭图片预览弹窗
-   */
-  function closeImageModal(): void {
-    isModalOpen = false;
-    document.body.style.overflow = 'auto';
-  }
-
-  function handleModalOverlayClick(e: MouseEvent): void {
-    if (e.target === e.currentTarget) {
-      closeImageModal();
+    if (e.target?.src !== NETWORK_CONSTANTS.ERROR_PLACEHOLDER && !e.target?.src.startsWith('blob:')) {
+      e.target.src = NETWORK_CONSTANTS.ERROR_PLACEHOLDER;
     }
   }
 
   // ========== 响应式状态 ==========
   $: hasValidPath = Boolean(safeValue && safeValue.trim() !== '');
-  $: combinedDisabled = disabled || !productCode || isUploading || isDeleting;
+  $: combinedDisabled = disabled || !productCode || isUploading || isDeleting || isTempUploading;
   $: showUploadedSection = hasValidPath && !isUploading;
+  $: showPendingSection = Boolean(pendingFile && pendingFilePreviewUrl);
 
-  // 路径变化时重新生成URL
   $: if (hasValidPath) {
     imgLoadError = false;
     getPreviewUrl();
@@ -346,18 +394,18 @@
 
   // ========== 组件销毁清理 ==========
   onDestroy(() => {
-    // 🔥 修复：Blob URL释放错误（create → revoke）
     if (previewUrlCache && previewUrlCache.startsWith('blob:')) {
       URL.revokeObjectURL(previewUrlCache);
     }
-    previewUrlCache = '';
-    debugPreviewUrl = '';
-    document.body.style.overflow = 'auto';
+    if (pendingFilePreviewUrl && pendingFilePreviewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(pendingFilePreviewUrl);
+    }
   });
 </script>
 
+<!-- 模板部分完全不变 -->
 <div class="image-upload-container">
-  <!-- 文件选择区域 -->
+  <!-- 1. 文件选择区域 -->
   <div class="upload-section">
     <input
       type="file"
@@ -372,7 +420,64 @@
     {/if}
   </div>
 
-  <!-- 上传中状态 -->
+  <!-- 2. 待上传图片区域 -->
+  {#if showPendingSection}
+    <div class="pending-section">
+      <div class="pending-header">
+        <span class="pending-title">待上传图片</span>
+      </div>
+      <div class="pending-body">
+        <!-- 待上传图片预览 -->
+        <div class="pending-preview">
+          <img
+            src={pendingFilePreviewUrl}
+            alt="待上传图片预览"
+            class="pending-preview-img"
+            on:error={handleImgError}
+          />
+        </div>
+        <!-- 文件信息 -->
+        <div class="pending-file-info">
+          <p><strong>文件名：</strong>{pendingFile?.name}</p>
+          <p><strong>大小：</strong>{pendingFile ? (pendingFile.size / 1024 / 1024).toFixed(2) + ' MB' : '-'}</p>
+          <p><strong>格式：</strong>{pendingFile ? getFileExtension(pendingFile).toUpperCase() : '-'}</p>
+          <p><strong>商品货号：</strong>{productCode}</p>
+        </div>
+        <!-- 操作按钮：编辑按钮跳转到指定地址 -->
+        <div class="pending-actions">
+          <button
+            type="button"
+            class="edit-btn"
+            on:click={editPendingImage}
+            disabled={combinedDisabled || isUploading || isTempUploading}
+            title="编辑图片"
+          >
+            {isTempUploading ? '上传中...' : '✏️ 编辑图片'}
+          </button>
+          <button
+            type="button"
+            class="confirm-upload-btn"
+            on:click={confirmUpload}
+            disabled={combinedDisabled || isUploading}
+            title="确认上传"
+          >
+            {isUploading ? '上传中...' : '✅ 确认上传'}
+          </button>
+          <button
+            type="button"
+            class="cancel-btn"
+            on:click={cancelUpload}
+            disabled={isUploading || isTempUploading}
+            title="取消上传"
+          >
+            ❌ 取消
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- 3. 上传中状态 -->
   {#if isUploading}
     <div class="uploading-section">
       <div class="progress-container">
@@ -383,12 +488,11 @@
     </div>
   {/if}
 
-  <!-- 已上传图片区域 -->
+  <!-- 4. 已上传图片区域 -->
   {#if showUploadedSection}
     <div class="path-section">
       <div class="path-header">
         <label class="path-label">路径：</label>
-        <!-- 🔥 新增：清除按钮 -->
         <button
           type="button"
           class="clear-btn"
@@ -414,54 +518,32 @@
 
     <div class="preview-wrapper">
       <img
-        src={getPreviewUrl() || ERROR_PLACEHOLDER}
+        src={getPreviewUrl() || NETWORK_CONSTANTS.ERROR_PLACEHOLDER}
         alt="商品图片预览"
         class="preview-img"
         on:error={handleImgError}
-        title="点击查看大图"
-        on:click={openImageModal}
+        title="商品图片预览"
       />
       <p class="preview-text">
-        <button
-          type="button"
-          class="preview-btn"
-          on:click={openImageModal}
-          title="查看大图"
-          disabled={imgLoadError}
-        >
-          查看大图 ↗
-        </button>
+        <span class="preview-tip">已上传图片预览</span>
       </p>
     </div>
   {/if}
 </div>
 
-<!-- 图片预览弹窗 -->
-{#if isModalOpen}
-  <div class="image-preview-modal" on:click={handleModalOverlayClick}>
-    <div class="preview-content">
-      <button class="close-btn" on:click={closeImageModal}>&times;</button>
-      <div class="preview-image-container">
-        <img
-          src={previewUrlCache || ERROR_PLACEHOLDER}
-          alt="商品图片预览"
-          class="modal-preview-img"
-          on:error={handleImgError}
-        />
-      </div>
-    </div>
-  </div>
-{/if}
-
+<!-- 样式部分完全不变 -->
 <style>
   .image-upload-container {
     margin: 4px 0;
     width: 100%;
     font-size: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
 
   .upload-section {
-    margin-bottom: 4px;
+    width: 100%;
   }
 
   .upload-input {
@@ -481,9 +563,135 @@
     opacity: 0.6;
   }
 
+  /* 待上传图片区域样式 */
+  .pending-section {
+    padding: 8px;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    background-color: #fafafa;
+  }
+
+  .pending-header {
+    margin-bottom: 6px;
+    border-bottom: 1px dashed #eee;
+    padding-bottom: 4px;
+  }
+
+  .pending-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: #333;
+  }
+
+  .pending-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .pending-preview {
+    text-align: center;
+  }
+
+  .pending-preview-img {
+    max-width: 120px;
+    max-height: 100px;
+    border: 1px solid #ced4da;
+    border-radius: 3px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .pending-file-info {
+    font-size: 9px;
+    color: #666;
+    padding: 4px;
+    background-color: #f9f9f9;
+    border-radius: 3px;
+  }
+
+  .pending-file-info p {
+    margin: 2px 0;
+  }
+
+  .pending-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  /* 编辑按钮样式 */
+  .edit-btn {
+    padding: 3px 8px;
+    background-color: #2196f3;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 9px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .edit-btn:hover:not(:disabled) {
+    background-color: #1976d2;
+  }
+
+  .edit-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* 确认上传按钮 */
+  .confirm-upload-btn {
+    padding: 3px 8px;
+    background-color: #4caf50;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 9px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .confirm-upload-btn:hover:not(:disabled) {
+    background-color: #43a047;
+  }
+
+  .confirm-upload-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* 取消按钮 */
+  .cancel-btn {
+    padding: 3px 8px;
+    background-color: #ff9800;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 9px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .cancel-btn:hover:not(:disabled) {
+    background-color: #f57c00;
+  }
+
+  .cancel-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
   /* 上传中状态样式 */
   .uploading-section {
-    margin: 8px 0;
+    margin: 4px 0;
     padding: 8px;
     border: 1px solid #2196f3;
     border-radius: 4px;
@@ -526,16 +734,16 @@
     margin: 0;
   }
 
-  /* 路径区域样式（新增清除按钮布局） */
+  /* 已上传路径区域样式 */
   .path-section {
     margin: 2px 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
     align-items: flex-start;
+    width: 100%;
   }
 
-  /* 🔥 新增：路径头部（标签+清除按钮） */
   .path-header {
     display: flex;
     align-items: center;
@@ -550,7 +758,7 @@
     min-width: 40px;
   }
 
-  /* 🔥 新增：清除按钮样式 */
+  /* 清除按钮样式 */
   .clear-btn {
     padding: 2px 8px;
     background-color: #ff4444;
@@ -598,6 +806,7 @@
     color: #999;
     margin-top: 2px;
     word-break: break-all;
+    width: 100%;
   }
 
   .warning-text {
@@ -608,10 +817,12 @@
     line-height: 1.2;
   }
 
+  /* 已上传图片预览区域 */
   .preview-wrapper {
     margin-top: 4px;
     padding-top: 4px;
     border-top: 1px dashed #dee2e6;
+    width: 100%;
   }
 
   .preview-img {
@@ -620,7 +831,6 @@
     border: 1px solid #ced4da;
     border-radius: 3px;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-    cursor: pointer;
   }
 
   .preview-text {
@@ -629,82 +839,7 @@
     margin: 2px 0 0 0;
   }
 
-  .preview-btn {
-    background: transparent;
-    border: none;
-    color: #3498db;
-    cursor: pointer;
-    font-size: 9px;
-    padding: 0;
-    margin-left: 4px;
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-  }
-
-  .preview-btn:disabled {
+  .preview-tip {
     color: #999;
-    cursor: not-allowed;
-    text-decoration: none;
-  }
-
-  .preview-btn:hover:not(:disabled) {
-    text-decoration: underline;
-  }
-
-  /* 弹窗样式 */
-  .image-preview-modal {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background-color: rgba(0, 0, 0, 0.85);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 9999;
-    padding: 20px;
-  }
-
-  .preview-content {
-    position: relative;
-    max-width: 90%;
-    max-height: 90%;
-  }
-
-  .close-btn {
-    position: absolute;
-    top: -10px;
-    right: -10px;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background-color: #ff4444;
-    color: white;
-    border: none;
-    font-size: 24px;
-    cursor: pointer;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 10;
-  }
-
-  .close-btn:hover {
-    background-color: #cc0000;
-  }
-
-  .preview-image-container {
-    max-width: 100%;
-    max-height: 80vh;
-    overflow: hidden;
-    border-radius: 8px;
-  }
-
-  .modal-preview-img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
   }
 </style>
