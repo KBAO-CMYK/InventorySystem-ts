@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, formatStockOutData, validateFormData, handleApiError } from '../lib/api.ts'
+  import { api, formatStockOutData, validateFormData, handleApiError } from '../lib/api'
 
   // ========== 导出Props类型注解 ==========
   export let selectedItems: any[] = []
@@ -36,7 +36,6 @@
   /** 出库记录接口 */
   interface StockOutRecord {
     商品编号: string;
-    商品名称: string;
     出库数量: number;
     楼层: string | number;
     架号: string;
@@ -266,7 +265,7 @@
   // 验证批量出库数据
   function validateBatchStockOut(): boolean {
     try {
-      // 验证操作人员
+      // 验证操作人
       validateFormData(batchStockOutForm, ['operator'])
 
       let hasError = false
@@ -328,7 +327,6 @@
 
     return {
       商品编号: productInfo.货号 || productInfo.商品编号 || '',
-      商品名称: productInfo.商品名称 || '',
       出库数量: quantity,
       楼层: locationInfo.楼层 || '',
       架号: locationInfo.架号 || '',
@@ -442,7 +440,7 @@
     if (!records || records.length === 0) return ''
 
     const headers = [
-      '商品编号', '商品名称', '类型', '出库数量', '规格', '颜色',
+      '商品编号', '类型', '出库数量', '规格', '颜色',
       '楼层', '架号', '框号', '包号', '操作时间'
     ]
 
@@ -461,7 +459,6 @@
 
         return [
           escapeValue(record.商品编号 || ''),
-          escapeValue(record.商品名称 || ''),
           escapeValue(record.类型 || ''),
           escapeValue(record.出库数量 || 0),
           escapeValue(record.规格 || ''),
@@ -537,7 +534,7 @@
     if (!data || data.length === 0) return ''
 
     const headers = [
-      '库存ID', '商品编号', '商品名称', '类型', '库存数量', '状态', '批次', '单位',
+      '库存ID', '商品编号', '类型', '库存数量', '状态', '批次', '单位',
       '楼层', '架号', '框号', '包号', '地址类型',
       '单价', '重量', '规格', '材质', '颜色', '形状', '风格',
       '厂家', '厂家地址', '电话'
@@ -568,7 +565,6 @@
       const row = [
         escapeCSVValue(item.库存ID),
         escapeCSVValue(productInfo.货号 || ''),
-        escapeCSVValue(productInfo.商品名称 || ''),
         escapeCSVValue(productInfo.类型 || ''),
         escapeCSVValue(getCurrentStock(item)), // 仅读取后端返回的库存值
         escapeCSVValue(item.状态 || ''),
@@ -589,8 +585,6 @@
         escapeCSVValue(manufacturerInfo.厂家 || ''),
         escapeCSVValue(manufacturerInfo.厂家地址 || ''),
         escapeCSVValue(manufacturerInfo.电话 || ''),
-        escapeCSVValue(item.累计入库数量 || 0), // 仅展示，不计算
-        escapeCSVValue(item.累计出库数量 || 0)  // 仅展示，不计算
       ]
       csvRows.push(row.join(','))
     })
@@ -692,12 +686,12 @@
             <h3>公共信息</h3>
             <div class="form-row">
               <div class="form-group">
-                <label for="batch_operator">操作人员 *</label>
+                <label for="batch_operator">操作人 *</label>
                 <input
                   id="batch_operator"
                   type="text"
                   bind:value={batchStockOutForm.operator}
-                  placeholder="请输入操作人员姓名"
+                  placeholder="请输入操作人姓名"
                   required
                 />
               </div>
@@ -789,9 +783,6 @@
                       <div class="product-code">
                         {item.商品信息?.货号 || item.库存ID}
                       </div>
-                      <div class="product-name">
-                        {item.商品信息?.商品名称 || ''}
-                      </div>
                       <div class="product-type">
                         {item.商品信息?.类型 || '未分类'}
                       </div>
@@ -870,7 +861,6 @@
             <h4>CSV文件将包含以下信息：</h4>
             <ul>
               <li>商品编号</li>
-              <li>商品名称</li>
               <li>类型</li>
               <li>出库数量</li>
               <li>规格</li>

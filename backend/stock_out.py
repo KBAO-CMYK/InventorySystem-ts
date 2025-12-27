@@ -7,6 +7,7 @@ from datetime import datetime
 from utils import *
 from config import *
 from inventory_management import *
+from get import *
 
 
 
@@ -111,7 +112,7 @@ def batch_stock_out(data):
             )
         if operation_df.empty:
             operation_df = pd.DataFrame(
-                columns=["操作ID", "关联库存ID", "操作类型", "操作数量", "操作时间", "操作人员", "备注"]
+                columns=["操作ID", "关联库存ID", "操作类型", "操作数量", "操作时间", "操作人", "备注"]
             )
 
         # 时间格式验证
@@ -243,7 +244,7 @@ def batch_stock_out(data):
                     "操作类型": "出库",
                     "操作数量": out_quantity,
                     "操作时间": out_time,
-                    "操作人员": operator,
+                    "操作人": operator,
                     "备注": remark
                 })
 

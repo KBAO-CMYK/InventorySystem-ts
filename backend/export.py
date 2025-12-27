@@ -16,7 +16,7 @@ def export_operation_records(operation_type=None, inventory_id=None, start_date=
 
         # 写入表头
         writer.writerow([
-            "操作ID", "操作类型", "关联库存ID", "操作数量", "操作时间", "操作人员", "操作备注",
+            "操作ID", "操作类型", "关联库存ID", "操作数量", "操作时间", "操作人", "操作备注",
             "库存ID", "库存数量", "次品数量", "批次", "状态", "单位",
             "商品ID", "货号", "商品名称", "类型", "图片路径", "备注", "用途",
             "特征ID", "单价", "重量", "规格", "材质", "颜色", "形状", "风格",
@@ -201,7 +201,7 @@ def export_operation_records(operation_type=None, inventory_id=None, start_date=
                     str(record.get("关联库存ID", "")),
                     str(convert_to_serializable(record.get("操作数量", 0))),
                     str(record.get("操作时间", "")),
-                    str(record.get("操作人员", "")),
+                    str(record.get("操作人", "")),
                     str(record.get("备注", "")),
                     str(inventory_info.get("库存ID", "")),
                     str(convert_to_serializable(inventory_info.get("库存数量", 0))),
@@ -249,7 +249,7 @@ def export_operation_records(operation_type=None, inventory_id=None, start_date=
                         record.get("关联库存ID", ""),
                         record.get("操作数量", ""),
                         record.get("操作时间", ""),
-                        record.get("操作人员", ""),
+                        record.get("操作人", ""),
                         record.get("备注", ""),
                         "", "", "", "", "", "",  # 库存信息
                         "", "", "", "", "", "", "", "",  # 商品信息
@@ -288,7 +288,7 @@ def export_operation_records_simple(operation_type=None, inventory_id=None, star
 
         # 写入表头
         writer.writerow([
-            "操作ID", "操作类型", "关联库存ID", "操作数量", "操作时间", "操作人员", "备注"
+            "操作ID", "操作类型", "关联库存ID", "操作数量", "操作时间", "操作人", "备注"
         ])
 
         # 获取操作记录
@@ -330,7 +330,7 @@ def export_operation_records_simple(operation_type=None, inventory_id=None, star
                 row.get("关联库存ID", ""),
                 convert_to_serializable(row.get("操作数量", 0)),
                 row.get("操作时间", ""),
-                row.get("操作人员", ""),
+                row.get("操作人", ""),
                 row.get("备注", "")
             ])
 

@@ -5,12 +5,12 @@ from stock_in import *
 from export import *
 from lend_return import *
 from image import *
-import os
-import uuid
-import time
-import shutil
-from datetime import datetime, timedelta
+from get_last_address_info import  get_last_address_info
+from image2 import *
+import logging
 from flask import Flask, request, send_file, jsonify, abort
+
+
 
 # ========== 初始化Flask应用 ==========
 app = Flask(__name__)
@@ -357,19 +357,15 @@ def get_product_images(product_code):
         "data": images
     }), 200
 
+
 @app.route("/api/batch_delete_image", methods=["POST"])
-def batch_delete_image():
+@api_exception_handler
+def batch_delete_image_route():
     """
-    批量图片删除接口（仅清空目标特征ID的路径，无引用再删图片，避免共用图片误删）
+    批量图片删除接口路由
     请求格式：application/json
-    参数：
-        - featureIds: 商品特征ID数组（可选，与imagePaths二选一）
-        - imagePaths: 图片相对路径数组（可选，与featureIds二选一）
-        - relatedProductIds: 关联商品货号数组（可选，用于精准清理缓存）
-        - cleanCsv: 是否同步清空feature.csv中的图片路径（可选，默认true）
-    返回：JSON响应（包含整体状态+每个项的处理详情）
     """
-    # 1. 解析JSON请求数据
+    # 解析JSON请求数据
     try:
         data = request.get_json()
         if not isinstance(data, dict):
@@ -385,304 +381,11 @@ def batch_delete_image():
             "details": []
         }), 400
 
-    # 2. 提取并校验批量参数
-    feature_ids: List[str] = data.get("featureIds", [])
-    image_paths: List[str] = data.get("imagePaths", [])
-    related_product_ids: List[str] = data.get("relatedProductIds", [])
-    clean_csv = data.get("cleanCsv", True)
+    # 调用业务逻辑
+    result, status_code = batch_delete_images_logic(data, app.logger)
 
-    # 2.1 类型校验（确保是数组）
-    if not isinstance(feature_ids, list) or not isinstance(image_paths, list) or not isinstance(related_product_ids,
-                                                                                                list):
-        app.logger.warning("[批量删除失败] featureIds/imagePaths/relatedProductIds需为数组")
-        return jsonify({
-            "status": "error",
-            "message": "featureIds/imagePaths/relatedProductIds必须为数组类型",
-            "total": 0,
-            "success_count": 0,
-            "fail_count": 0,
-            "details": []
-        }), 400
-
-    # 2.2 去重+空值过滤
-    feature_ids = [str(fid).strip() for fid in feature_ids if fid and str(fid).strip()]
-    image_paths = [path.strip() for path in image_paths if path and str(path).strip()]
-    related_product_ids = [code.strip() for code in related_product_ids if code and str(code).strip()]
-
-    # 2.3 校验参数非空（至少传特征ID数组或图片路径数组其一）
-    if not feature_ids and not image_paths:
-        app.logger.warning("[批量删除失败] 特征ID数组和图片路径数组同时为空")
-        return jsonify({
-            "status": "error",
-            "message": "特征ID数组（featureIds）和图片路径数组（imagePaths）不能同时为空",
-            "total": 0,
-            "success_count": 0,
-            "fail_count": 0,
-            "details": []
-        }), 400
-
-    # 3. 统一整理待处理的图片路径（批量转换featureId→imagePath）
-    target_path_map: Dict[str, str] = {}  # key: 特征ID/路径标识, value: 图片路径
-    error_details: List[Dict] = []
-
-    # 3.1 处理featureIds批量转换为图片路径
-    fid_to_path = {}  # 新增：记录featureId与对应路径的映射
-    if feature_ids:
-        try:
-            # ========== 新增/修改开始 ==========
-            # 步骤1：先构建特征ID(int)到图片路径的映射表（从CSV读取）
-            feature_image_mapping = {}
-            csv_data = read_csv_data()
-            feature_df = csv_data.get("feature", pd.DataFrame())
-            if not feature_df.empty:
-                for _, row in feature_df.iterrows():
-                    # 提取特征ID并转为int（兼容0值）
-                    fid_val = row["商品特征ID"]
-                    if pd.isna(fid_val):
-                        continue
-                    try:
-                        fid_int = int(fid_val)
-                    except (ValueError, TypeError):
-                        continue
-
-                    # 提取图片路径并校验
-                    path_val = row["图片路径"]
-                    if pd.isna(path_val) or not str(path_val).strip():
-                        continue
-                    feature_image_mapping[fid_int] = str(path_val).strip()
-
-            # 步骤2：调用函数时传入映射表（修正核心错误）
-            fid_path_map = batch_get_feature_image_by_ids(feature_ids, feature_image_mapping)
-            # ========== 新增/修改结束 ==========
-
-            for fid in feature_ids:
-                path = fid_path_map.get(fid, "")
-                fid_to_path[fid] = path  # 保存featureId对应的原始路径
-                if not path:
-                    error_details.append({
-                        "type": "featureId",
-                        "id": fid,
-                        "status": "fail",
-                        "message": f"特征ID[{fid}]未关联任何图片",
-                        "image_path": "",
-                        "image_deleted": False,
-                        "csv_cleaned": False,
-                        "remaining_references": 0
-                    })
-                else:
-                    target_path_map[f"fid_{fid}"] = path
-        except Exception as e:
-            app.logger.error(f"[批量删除失败] 批量查询特征ID关联图片失败：{str(e)}")
-            return jsonify({
-                "status": "error",
-                "message": f"批量查询特征ID关联图片失败：{str(e)}",
-                "total": len(feature_ids) + len(image_paths),
-                "success_count": 0,
-                "fail_count": len(feature_ids) + len(image_paths),
-                "details": error_details
-            }), 500
-
-    # 3.2 处理imagePaths直接加入待处理列表（兼容原有逻辑，关联featureId）
-    for path in image_paths:
-        # 如果有featureIds，优先关联（前端删除时会传featureId）
-        if feature_ids:
-            for fid in feature_ids:
-                target_path_map[f"fid_{fid}"] = path
-                fid_to_path[fid] = path
-        else:
-            target_path_map[f"path_{path}"] = path
-
-    # 4. 校验所有图片路径合法性（批量）
-    valid_path_map: Dict[str, Dict] = {}  # key: 标识, value: {path, full_path, valid}
-    for identifier, path in target_path_map.items():
-        full_path = get_image_full_path(path)
-        if not full_path:
-            error_details.append({
-                "type": "imagePath" if identifier.startswith("path_") else "featureId",
-                "id": identifier.split("_")[1],
-                "status": "fail",
-                "message": f"图片路径非法或不存在：{path}",
-                "image_path": path,
-                "image_deleted": False,
-                "csv_cleaned": False,
-                "remaining_references": 0
-            })
-        else:
-            valid_path_map[identifier] = {
-                "path": path,
-                "full_path": full_path,
-                "norm_path": os.path.normpath(path) if path else ""
-            }
-
-    # 5. 批量处理CSV清理（核心修改：仅清空目标特征ID的行，而非所有路径匹配的行）
-    csv_clean_success = False
-    path_reference_map: Dict[str, int] = {}  # 记录每个路径清理后的剩余引用数
-    feature_df = pd.DataFrame()
-
-    if clean_csv and valid_path_map:
-        try:
-            csv_data = read_csv_data()
-            feature_df = csv_data.get("feature", pd.DataFrame())
-            if not feature_df.empty:
-                # 标准化所有路径（仅处理非空值）
-                feature_df["图片路径"] = feature_df["图片路径"].apply(
-                    lambda x: os.path.normpath(x) if (pd.notna(x) and x != "") else x
-                )
-
-                # 核心修改：仅清空目标特征ID对应的行，而非所有路径匹配的行
-                clear_fids = []
-                for identifier, info in valid_path_map.items():
-                    if identifier.startswith("fid_"):
-                        fid = identifier.split("_")[1]
-                        try:
-                            clear_fids.append(int(fid))  # 收集要清空的featureId
-                        except ValueError:
-                            error_details.append({
-                                "type": "featureId",
-                                "id": fid,
-                                "status": "fail",
-                                "message": f"特征ID[{fid}]无法转换为整数",
-                                "image_path": info["path"],
-                                "image_deleted": False,
-                                "csv_cleaned": False,
-                                "remaining_references": 0
-                            })
-
-                # 仅清空目标featureId对应的行的图片路径
-                if clear_fids:
-                    mask_fid = feature_df["商品特征ID"].isin(clear_fids)
-                    feature_df.loc[mask_fid, "图片路径"] = ""  # 只清空这些行，不管路径是什么
-                    app.logger.info(f"[批量CSV清理] 按特征ID清空 {mask_fid.sum()} 行（仅目标ID）")
-
-                # 批量统计每个路径的剩余引用数（用于判断是否删文件）
-                all_target_paths = [info["norm_path"] for info in valid_path_map.values()]
-                for path in all_target_paths:
-                    remaining = len(feature_df[
-                                        (feature_df["图片路径"] == path) &
-                                        (pd.notna(feature_df["图片路径"])) &
-                                        (feature_df["图片路径"] != "")
-                                        ])
-                    path_reference_map[path] = remaining
-
-                # 写回CSV
-                csv_data["feature"] = feature_df
-                write_csv_data(csv_data)
-                csv_clean_success = True
-                app.logger.info(f"[批量CSV同步成功] 处理{len(valid_path_map)}个特征ID，剩余引用数：{path_reference_map}")
-            else:
-                app.logger.warning("[批量CSV清理] feature.csv为空，无需处理")
-                csv_clean_success = True
-                # 空CSV时所有路径剩余引用数为0
-                for info in valid_path_map.values():
-                    path_reference_map[info["norm_path"]] = 0
-        except Exception as e:
-            app.logger.error(f"[批量CSV清理失败] {str(e)}")
-            return jsonify({
-                "status": "error",
-                "message": f"批量清理CSV失败：{str(e)}",
-                "total": len(valid_path_map) + len(error_details),
-                "success_count": 0,
-                "fail_count": len(valid_path_map) + len(error_details),
-                "details": error_details
-            }), 500
-
-    # 6. 批量处理图片删除（仅无剩余引用时删除，逻辑不变）
-    success_details: List[Dict] = []
-    for identifier, info in valid_path_map.items():
-        path = info["path"]
-        full_path = info["full_path"]
-        norm_path = info["norm_path"]
-        remaining_ref = path_reference_map.get(norm_path, 0)
-        delete_success = False
-        item_type = "imagePath" if identifier.startswith("path_") else "featureId"
-        item_id = identifier.split("_")[1]
-
-        try:
-            # 仅无剩余引用且文件存在时删除
-            if os.path.exists(full_path) and remaining_ref == 0:
-                os.remove(full_path)
-                delete_success = True
-                app.logger.info(f"[批量图片删除成功] 路径：{full_path} | 无剩余引用")
-            elif os.path.exists(full_path) and remaining_ref > 0:
-                app.logger.warning(f"[批量图片保留] 路径：{full_path} | 仍有{remaining_ref}个引用")
-            else:
-                app.logger.warning(f"[批量图片警告] 文件不存在：{full_path}")
-
-            # 构建成功项详情
-            success_details.append({
-                "type": item_type,
-                "id": item_id,
-                "status": "success",
-                "message": (
-                    "特征ID对应的图片路径已清空，且无其他引用，图片文件已删除" if delete_success
-                    else f"特征ID对应的图片路径已清空，仍有{remaining_ref}个引用，文件保留" if remaining_ref > 0
-                    else "特征ID对应的图片路径已清空，图片文件不存在"
-                ),
-                "image_path": path,
-                "full_image_path": full_path,
-                "image_deleted": delete_success,
-                "csv_cleaned": clean_csv and csv_clean_success,
-                "remaining_references": remaining_ref
-            })
-        except PermissionError:
-            error_details.append({
-                "type": item_type,
-                "id": item_id,
-                "status": "fail",
-                "message": f"无文件写入权限：{full_path}",
-                "image_path": path,
-                "image_deleted": False,
-                "csv_cleaned": clean_csv and csv_clean_success,
-                "remaining_references": remaining_ref
-            })
-        except Exception as e:
-            error_details.append({
-                "type": item_type,
-                "id": item_id,
-                "status": "fail",
-                "message": f"处理失败：{str(e)}",
-                "image_path": path,
-                "image_deleted": False,
-                "csv_cleaned": clean_csv and csv_clean_success,
-                "remaining_references": remaining_ref
-            })
-
-    # 7. 批量清理缓存（逻辑不变）
-    if related_product_ids:
-        clear_image_cache_by_product_code(related_product_ids)
-    # 清理内存缓存中涉及的路径
-    all_target_paths = [info["path"] for info in valid_path_map.values()]
-    for path in all_target_paths:
-        if path in image_memory_cache:
-            del image_memory_cache[path]
-    get_image_full_path.cache_clear()
-
-    # 8. 汇总响应数据（逻辑不变）
-    all_details = success_details + error_details
-    total = len(all_details)
-    success_count = len(success_details)
-    fail_count = len(error_details)
-
-    # 整体状态判断
-    if fail_count == total:
-        overall_status = "error"
-    elif fail_count > 0:
-        overall_status = "partial_success"
-    else:
-        overall_status = "success"
-
-    return jsonify({
-        "status": overall_status,
-        "message": (
-            "全部处理成功" if overall_status == "success"
-            else f"部分处理成功（成功{success_count}个，失败{fail_count}个）" if overall_status == "partial_success"
-            else "全部处理失败"
-        ),
-        "total": total,
-        "success_count": success_count,
-        "fail_count": fail_count,
-        "details": all_details
-    }), 200 if overall_status != "error" else 500
+    # 返回JSON响应
+    return jsonify(result), status_code
 
 
 

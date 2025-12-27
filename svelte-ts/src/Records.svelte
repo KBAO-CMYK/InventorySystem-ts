@@ -24,7 +24,7 @@
     操作类型: string;
     操作数量: number | string;
     操作时间: string;
-    操作人员: string;
+    操作人: string;
     备注: string;
     商品ID: string | number;
     商品编号: string;
@@ -218,7 +218,7 @@
                 操作类型: operation.操作类型 || '',
                 操作数量: operation.操作数量 || 0,
                 操作时间: operation.操作时间 || '',
-                操作人员: operation.操作人员 || '',
+                操作人: operation.操作人 || '',
                 备注: operation.备注 || '',
                 商品ID: productInfo.商品ID || '',
                 商品编号: productInfo.货号 || productInfo.商品编号 || '',
@@ -260,7 +260,7 @@
                 操作类型: record.操作类型 || '',
                 操作数量: record.操作数量 || 0,
                 操作时间: record.操作时间 || '',
-                操作人员: record.操作人员 || '',
+                操作人: record.操作人 || '',
                 备注: record.备注 || '',
                 商品ID: record.商品ID || '',
                 商品编号: record.商品编号 || '',
@@ -402,7 +402,7 @@
         }
 
         if (filter.operator) {
-          const operator = record.操作人员?.toLowerCase() || '';
+          const operator = record.操作人?.toLowerCase() || '';
           if (!operator.includes(filter.operator.toLowerCase().trim())) {
             return false;
           }
@@ -586,7 +586,7 @@
   function exportSelectedRecordsAsCSV(records: OperationRecord[]): Promise<void> {
     return new Promise((resolve) => {
       const headers: string[] = [
-        '操作ID', '操作类型', '关联库存ID', '操作数量', '操作时间', '操作人员', '操作备注',
+        '操作ID', '操作类型', '关联库存ID', '操作数量', '操作时间', '操作人', '操作备注',
         '商品编号', '商品名称', '商品类型',
         '库存数量', '状态', '单位',
         '单价', '规格', '颜色',
@@ -601,7 +601,7 @@
           record.关联库存ID || '',
           record.操作数量 || '',
           record.操作时间 || '',
-          record.操作人员 || '',
+          record.操作人 || '',
           record.备注 || '',
           record.商品编号 || '',
           record.商品名称 || '',
@@ -790,12 +790,12 @@
 
       <div class="form-row">
         <div class="form-group">
-          <label for="operation_filter_operator">操作人员</label>
+          <label for="operation_filter_operator">操作人</label>
           <input
             id="operation_filter_operator"
             type="text"
             bind:value={operationFilter.operator}
-            placeholder="操作人员"
+            placeholder="操作人"
           />
         </div>
         <!-- 【修改6】表单改为日期+小时输入框 -->
@@ -959,8 +959,8 @@
             <th class="sortable" on:click={() => toggleSort('操作时间')}>
               操作时间{getSortIndicator('操作时间')}
             </th>
-            <th class="sortable" on:click={() => toggleSort('操作人员')}>
-              操作人员{getSortIndicator('操作人员')}
+            <th class="sortable" on:click={() => toggleSort('操作人')}>
+              操作人{getSortIndicator('操作人')}
             </th>
             <th>备注</th>
           </tr>
@@ -991,7 +991,7 @@
                 {record.操作数量}
               </td>
               <td>{record.操作时间}</td>
-              <td>{record.操作人员}</td>
+              <td>{record.操作人}</td>
               <td title={record.备注 || ''}>{record.备注 ? (record.备注.length > 20 ? record.备注.substring(0, 20) + '...' : record.备注) : '-'}</td>
             </tr>
           {/each}

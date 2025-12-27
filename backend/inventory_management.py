@@ -5,6 +5,11 @@ from utils import *
 from config import *
 from datetime import datetime
 import traceback
+import re
+# 1、查询详情
+# 2、编辑
+# 3、删除
+
 
 def convert_to_serializable(value):
     """将非JSON序列化类型转换为原生类型"""
@@ -28,208 +33,6 @@ def convert_to_serializable(value):
     else:
         return value
 
-def get_inventory_detail(inventory_id, page=1, page_size=50):
-    """查询库存详情 - 统一计算入库/出库/借/还后的库存数量"""
-    try:
-        csv_data = read_csv_data()
-
-        # 获取所有相关表
-        inventory_df = csv_data.get("inventory", pd.DataFrame())
-        feature_df = csv_data.get("feature", pd.DataFrame())
-        product_df = csv_data.get("product", pd.DataFrame())
-        location_df = csv_data.get("location", pd.DataFrame())
-        manufacturer_df = csv_data.get("manufacturer", pd.DataFrame())
-        operation_df = csv_data.get("operation_record", pd.DataFrame())
-
-        # 校验库存ID是否存在
-        if inventory_df.empty or "库存ID" not in inventory_df.columns:
-            return {"status": "error", "message": "库存数据表格结构异常"}, 500
-
-        # 筛选目标库存
-        inventory_df["库存ID"] = pd.to_numeric(inventory_df["库存ID"], errors="coerce").fillna(-1).astype(int)
-        target_inventory = inventory_df[inventory_df["库存ID"] == inventory_id]
-
-        if target_inventory.empty:
-            return {"status": "error", "message": f"未找到ID为{inventory_id}的库存记录"}, 404
-
-        # 获取关联ID
-        inventory_record = target_inventory.iloc[0]
-        feature_id = inventory_record.get("关联商品特征ID")
-        location_id = inventory_record.get("关联位置ID")
-        manufacturer_id = inventory_record.get("关联厂家ID")
-
-        # 获取商品特征信息
-        target_features = pd.DataFrame()
-        if feature_id is not None and not feature_df.empty and "商品特征ID" in feature_df.columns:
-            feature_df["商品特征ID"] = pd.to_numeric(feature_df["商品特征ID"], errors="coerce").fillna(
-                -1).astype(int)
-            target_features = feature_df[feature_df["商品特征ID"] == feature_id].copy()
-
-        # 获取商品信息
-        target_products = pd.DataFrame()
-        if feature_id is not None and not target_features.empty and not product_df.empty and "商品ID" in product_df.columns:
-            product_id = target_features.iloc[0].get("关联商品ID")
-            if product_id is not None:
-                product_df["商品ID"] = pd.to_numeric(product_df["商品ID"], errors="coerce").fillna(-1).astype(int)
-                target_products = product_df[product_df["商品ID"] == product_id].copy()
-
-        # 获取位置信息
-        target_locations = pd.DataFrame()
-        if location_id is not None and not location_df.empty and "地址ID" in location_df.columns:
-            location_df["地址ID"] = pd.to_numeric(location_df["地址ID"], errors="coerce").fillna(-1).astype(int)
-            target_locations = location_df[location_df["地址ID"] == location_id].copy()
-
-        # 获取厂家信息
-        target_manufacturers = pd.DataFrame()
-        if manufacturer_id is not None and not manufacturer_df.empty and "厂家ID" in manufacturer_df.columns:
-            manufacturer_df["厂家ID"] = pd.to_numeric(manufacturer_df["厂家ID"], errors="coerce").fillna(-1).astype(int)
-            target_manufacturers = manufacturer_df[manufacturer_df["厂家ID"] == manufacturer_id].copy()
-
-        # 获取操作记录
-        target_operations = pd.DataFrame()
-        if inventory_id is not None and not operation_df.empty and "关联库存ID" in operation_df.columns:
-            operation_df["关联库存ID"] = pd.to_numeric(operation_df["关联库存ID"], errors="coerce").fillna(-1).astype(
-                int)
-            target_operations = operation_df[operation_df["关联库存ID"] == inventory_id].copy()
-
-        # 操作记录分页
-        page = max(1, int(page))  # 确保是Python原生int
-        page_size = max(10, min(int(page_size), 100))  # 确保是Python原生int
-        total_operations = int(len(target_operations))  # 转换为Python原生int
-        total_pages = int((total_operations + page_size - 1) // page_size)  # 转换为Python原生int
-
-        # 分页截取
-        paginated_operations = pd.DataFrame()
-        if not target_operations.empty:
-            target_operations["操作时间"] = pd.to_datetime(target_operations["操作时间"], errors="coerce")
-            target_operations = target_operations.sort_values("操作时间", ascending=False)
-            start = (page - 1) * page_size
-            end = start + page_size
-            paginated_operations = target_operations.iloc[start:end]
-
-        def serialize_df(df):
-            """DataFrame序列化（确保所有值为JSON可序列化类型）"""
-            if df.empty:
-                return []
-            # 逐元素转换为可序列化类型
-            df_serializable = df.apply(lambda col: col.map(convert_to_serializable))
-            return df_serializable.to_dict('records')
-
-        # 数据序列化
-        inventory_dict = serialize_df(target_inventory)[0] if serialize_df(target_inventory) else {}
-        product_list = serialize_df(target_products)
-        feature_list = serialize_df(target_features)
-        location_list = serialize_df(target_locations)
-        manufacturer_list = serialize_df(target_manufacturers)
-        operation_list = serialize_df(paginated_operations)
-
-        # 计算操作统计（包含借/还）
-        total_in_quantity = 0.0
-        total_out_quantity = 0.0
-        total_lend_quantity = 0.0
-        total_return_quantity = 0.0
-        other_stats = {}
-
-        if not target_operations.empty:
-            # 确保操作数量为数值类型
-            target_operations["操作数量"] = pd.to_numeric(target_operations["操作数量"], errors="coerce").fillna(0)
-
-            # 入库/出库统计（转换为Python原生float）
-            in_operations = target_operations[target_operations["操作类型"] == "入库"]
-            total_in_quantity = float(in_operations["操作数量"].sum()) if not in_operations.empty else 0.0
-
-            out_operations = target_operations[target_operations["操作类型"] == "出库"]
-            total_out_quantity = float(out_operations["操作数量"].sum()) if not out_operations.empty else 0.0
-
-            # 借/还统计（转换为Python原生float）
-            lend_operations = target_operations[target_operations["操作类型"] == "借"]
-            total_lend_quantity = float(lend_operations["操作数量"].sum()) if not lend_operations.empty else 0.0
-
-            return_operations = target_operations[target_operations["操作类型"] == "还"]
-            total_return_quantity = float(return_operations["操作数量"].sum()) if not return_operations.empty else 0.0
-
-            # 其他操作类型（确保数值为Python原生类型）
-            other_operations = target_operations[~target_operations["操作类型"].isin(["入库", "出库", "借", "还"])]
-            if not other_operations.empty:
-                for op_type in other_operations["操作类型"].unique():
-                    op_type_str = str(op_type)  # 确保操作类型是字符串
-                    type_ops = other_operations[other_operations["操作类型"] == op_type]
-                    other_stats[op_type_str] = {
-                        "次数": int(len(type_ops)),  # 转换为Python原生int
-                        "总数量": float(type_ops["操作数量"].sum())  # 转换为Python原生float
-                    }
-
-        # 统一计算当前库存（转换为Python原生float）
-        current_stock = float(total_in_quantity - total_out_quantity - total_lend_quantity + total_return_quantity)
-        inventory_dict["库存数量"] = round(current_stock, 2)
-        inventory_dict["累计入库数量"] = total_in_quantity
-        inventory_dict["累计出库数量"] = total_out_quantity
-        inventory_dict["累计借出数量"] = total_lend_quantity
-        inventory_dict["累计归还数量"] = total_return_quantity
-
-        # 操作统计信息（确保所有值为JSON可序列化类型）
-        last_operation_time = ""
-        if not target_operations.empty:
-            last_op_time = target_operations["操作时间"].max()
-            last_operation_time = convert_to_serializable(last_op_time)
-
-        operation_stats = {
-            "total_in_quantity": float(total_in_quantity),
-            "total_out_quantity": float(total_out_quantity),
-            "total_lend_quantity": float(total_lend_quantity),
-            "total_return_quantity": float(total_return_quantity),
-            "current_stock": float(current_stock),
-            "total_operations": int(total_operations),
-            "other_operations": other_stats,
-            "last_operation_time": last_operation_time
-        }
-
-        # 处理多记录警告提示
-        warnings = []
-        if len(product_list) > 1:
-            warnings.append(f"该库存关联{len(product_list)}个商品记录，请确认数据是否正常")
-        if len(feature_list) > 1:
-            warnings.append(f"该库存关联{len(feature_list)}个特征记录，请确认数据是否正常")
-        if len(location_list) > 1:
-            warnings.append(f"该库存关联{len(location_list)}个位置记录，请确认数据是否正常")
-        if len(manufacturer_list) > 1:
-            warnings.append(f"该库存关联{len(manufacturer_list)}个厂家记录，请确认数据是否正常")
-
-        # 组装响应数据（确保所有数值为Python原生类型）
-        response_data = {
-            "status": "success",
-            "data": {
-                "inventory": inventory_dict,
-                "product": product_list[0] if product_list else {},
-                "feature": feature_list[0] if feature_list else {},
-                "location": location_list[0] if location_list else {},
-                "manufacturer": manufacturer_list[0] if manufacturer_list else {},
-                "operations": operation_list,
-                "operation_stats": operation_stats
-            },
-            "pagination": {
-                "total": int(total_operations),
-                "page": int(page),
-                "page_size": int(page_size),
-                "total_pages": int(total_pages)
-            }
-        }
-
-        if warnings:
-            response_data["warnings"] = warnings
-
-        return response_data, 200
-
-    except IndexError as e:
-        print(f"库存详情查询索引异常：{str(e)}")
-        return {"status": "error", "message": "库存数据索引错误，请检查数据完整性"}, 500
-    except TypeError as e:
-        print(f"库存详情查询类型异常：{str(e)}")
-        return {"status": "error", "message": "数据类型转换错误，请检查字段格式"}, 500
-    except Exception as e:
-        print(f"获取库存详情异常: {str(e)}")
-        return {"status": "error", "message": f"系统异常：{str(e)}"}, 500
-
 
 def serialize_df(df):
     """
@@ -249,10 +52,14 @@ def serialize_df(df):
     return df_serializable.to_dict('records')
 
 
-# ===================== 核心业务函数 =====================
 def get_inventory_detail(inventory_id, page=1, page_size=50):
     """查询库存详情 - 统一计算入库/出库/借/还后的库存数量"""
     try:
+        # ========== 【新增】打印请求参数 ==========
+        print("=" * 50)
+        print(f"【请求参数】库存ID：{inventory_id} | 页码：{page} | 页大小：{page_size}")
+        print("=" * 50)
+
         csv_data = read_csv_data()
 
         # 获取所有相关表（加 copy 避免原数据被修改）
@@ -272,6 +79,8 @@ def get_inventory_detail(inventory_id, page=1, page_size=50):
         target_inventory = inventory_df[inventory_df["库存ID"] == inventory_id].copy()
 
         if target_inventory.empty:
+            # ========== 【新增】打印库存不存在的提示 ==========
+            print(f"【错误】未找到库存ID为 {inventory_id} 的记录")
             return {"status": "error", "message": f"未找到ID为{inventory_id}的库存记录"}, 404
 
         # 获取关联ID
@@ -313,23 +122,177 @@ def get_inventory_detail(inventory_id, page=1, page_size=50):
                 int)
             target_operations = operation_df[operation_df["关联库存ID"] == inventory_id].copy()
 
+        # ========== 【新增】打印读取到的操作记录基础信息 ==========
+        print(f"\n【操作记录】共读取到 {len(target_operations)} 条记录")
+        if not target_operations.empty:
+            # 打印前5条记录的关键字段（操作类型、操作时间、操作数量）
+            print("【操作记录详情（前5条）】：")
+            for idx, (_, row) in enumerate(target_operations.head(5).iterrows()):
+                op_time = row.get("操作时间", "无")
+                # 处理 NaT/空值
+                if pd.isna(op_time):
+                    op_time = "NaT（空时间）"
+                print(
+                    f"  第{idx + 1}条：操作类型={row.get('操作类型', '无')} | 操作时间={op_time} | 操作数量={row.get('操作数量', 0)}")
+
         # 操作记录分页
         page = max(1, int(page))
         page_size = max(10, min(int(page_size), 100))
         total_operations = int(len(target_operations))
         total_pages = int((total_operations + page_size - 1) // page_size)
 
-        # 分页截取 + 处理操作时间（提前处理 NaT）
+        # 分页截取 + 处理操作时间（修复核心逻辑）
         paginated_operations = pd.DataFrame()
         if not target_operations.empty:
-            # 转换操作时间（兼容 NaT），但先不排序
-            target_operations["操作时间"] = pd.to_datetime(target_operations["操作时间"], errors="coerce")
-            # 排序：用 fillna 把 NaT 排到最后
+            # ========== 【新增：详细调试原始数据】 ==========
+            print("\n【详细调试】操作时间原始数据：")
+            for idx, (_, row) in enumerate(target_operations.iterrows()):
+                original_time = row["操作时间"]
+                print(f"  第{idx + 1}条：")
+                print(f"    类型：{type(original_time)}")
+                print(f"    值：{repr(original_time)}")
+                print(f"    长度：{len(str(original_time))}")
+
+            # ========== 【修复1：安全时间转换函数】 ==========
+            def safe_convert_time(time_str):
+                """安全的时间转换函数"""
+                if pd.isna(time_str):
+                    return pd.NaT
+
+                # 如果是 datetime 类型直接返回
+                if isinstance(time_str, (pd.Timestamp, datetime)):
+                    return time_str
+
+                # 转换为字符串并清理
+                str_time = str(time_str).strip()
+
+                # 清理常见问题字符
+                # 1. 替换全角字符
+                str_time = str_time.replace('：', ':')  # 全角冒号
+                str_time = str_time.replace('－', '-')  # 全角横线
+
+                # 2. 清理不可见字符（控制字符）
+                import re
+                str_time = re.sub(r'[\x00-\x1f\x7f]', '', str_time)
+
+                # 3. 处理多个空格
+                str_time = ' '.join(str_time.split())
+
+                # 4. 统一时间格式（添加秒部分如果缺少）
+                if ':' in str_time:
+                    parts = str_time.split(':')
+                    if len(parts) == 2:  # 只有时:分
+                        str_time = f'{str_time}:00'
+                    elif len(parts) > 3:  # 如果有多余部分，只取前3部分
+                        str_time = ':'.join(parts[:3])
+
+                # 5. 确保日期时间格式完整
+                if len(str_time) == 10:  # 只有日期
+                    str_time = f'{str_time} 00:00:00'
+                elif len(str_time) == 16:  # 日期+时:分
+                    str_time = f'{str_time}:00'
+
+                return str_time
+
+            # 应用安全转换
+            print("\n【安全转换】开始转换操作时间...")
+            target_operations["操作时间"] = target_operations["操作时间"].apply(safe_convert_time)
+
+            # ========== 【新增：调试转换后的字符串】 ==========
+            print("\n【调试】转换后的字符串：")
+            for idx, (_, row) in enumerate(target_operations.iterrows()):
+                conv_time = row["操作时间"]
+                print(f"  第{idx + 1}条：{repr(conv_time)}")
+
+            # ========== 【修复2：尝试多种转换方式】 ==========
+            # 方式1：尝试标准格式
+            target_operations["操作时间_parsed"] = pd.to_datetime(
+                target_operations["操作时间"],
+                errors='coerce',
+                format='%Y-%m-%d %H:%M:%S'
+            )
+
+            # 检查哪些转换失败
+            failed_mask = target_operations["操作时间_parsed"].isna()
+            if failed_mask.any():
+                print(f"\n【警告】部分时间转换失败：{failed_mask.sum()}条")
+
+                # 方式2：尝试不指定format，让pandas自动推断
+                target_operations.loc[failed_mask, "操作时间_parsed"] = pd.to_datetime(
+                    target_operations.loc[failed_mask, "操作时间"],
+                    errors='coerce',
+                    format=None  # 不指定格式，自动推断
+                )
+
+            # 方式3：如果还有失败，尝试更宽松的转换
+            still_failed_mask = target_operations["操作时间_parsed"].isna()
+            if still_failed_mask.any():
+                print(f"\n【警告】仍有{still_failed_mask.sum()}条记录转换失败，尝试最后手段...")
+
+                # 手动解析日期时间
+                for idx, row in target_operations[still_failed_mask].iterrows():
+                    time_str = row["操作时间"]
+                    if isinstance(time_str, str):
+                        # 尝试提取日期和时间
+                        date_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})', time_str)
+                        time_match = re.search(r'(\d{1,2}:\d{1,2}(:\d{1,2})?)', time_str)
+
+                        if date_match:
+                            date_part = date_match.group(1).replace('/', '-')
+                            time_part = time_match.group(1) if time_match else "00:00:00"
+
+                            # 补齐时间部分
+                            if ':' in time_part:
+                                time_parts = time_part.split(':')
+                                if len(time_parts) == 2:
+                                    time_part = f'{time_part}:00'
+
+                            combined_str = f'{date_part} {time_part}'
+                            try:
+                                target_operations.at[idx, "操作时间_parsed"] = pd.to_datetime(
+                                    combined_str, errors='coerce'
+                                )
+                            except:
+                                target_operations.at[idx, "操作时间_parsed"] = pd.NaT
+
+            # 使用转换后的列
+            target_operations["操作时间"] = target_operations["操作时间_parsed"]
+            target_operations.drop(columns=["操作时间_parsed"], inplace=True)
+
+            # ========== 【新增：调试转换后的时间】 ==========
+            print("\n【时间转换结果】：")
+            for idx, (_, row) in enumerate(target_operations.head(10).iterrows()):
+                conv_time = row["操作时间"]
+                if pd.isna(conv_time):
+                    conv_time_str = "NaT"
+                else:
+                    try:
+                        conv_time_str = conv_time.strftime("%Y-%m-%d %H:%M:%S")
+                    except:
+                        conv_time_str = "格式错误"
+                print(f"  第{idx + 1}条：转换后时间={conv_time_str}")
+
+            # 检查是否有未转换的记录
+            na_count = target_operations["操作时间"].isna().sum()
+            if na_count > 0:
+                print(f"\n【警告】仍有 {na_count} 条记录的时间转换失败")
+                # 填充默认值（使用当前时间或最早的有效时间）
+                valid_times = target_operations["操作时间"].dropna()
+                if not valid_times.empty:
+                    fill_time = valid_times.min()  # 使用最早的有效时间
+                else:
+                    fill_time = pd.Timestamp.now()
+
+                target_operations["操作时间"] = target_operations["操作时间"].fillna(fill_time)
+                print(f"【修复】已用 {fill_time.strftime('%Y-%m-%d %H:%M:%S')} 填充 {na_count} 条失败记录")
+
+            # ========== 【修复3：排序逻辑确认（降序，最新时间在前）】 ==========
             target_operations = target_operations.sort_values(
                 "操作时间",
-                ascending=False,
+                ascending=False,  # 降序：最新时间排在前面
                 na_position='last'  # NaT 放到最后
             )
+
             # 分页
             start = (page - 1) * page_size
             end = start + page_size
@@ -396,9 +359,11 @@ def get_inventory_detail(inventory_id, page=1, page_size=50):
         # 操作统计信息（处理最后操作时间）
         last_operation_time = ""
         if not target_operations.empty:
-            last_op_time = target_operations["操作时间"].max()
-            # 直接处理 NaT，不依赖序列化函数
-            last_operation_time = last_op_time.strftime("%Y-%m-%d %H:%M:%S") if not pd.isna(last_op_time) else ""
+            # ========== 【修复4：正确获取最后操作时间（排除NaT）】 ==========
+            valid_times = target_operations["操作时间"].dropna()
+            if not valid_times.empty:
+                last_op_time = valid_times.max()
+                last_operation_time = last_op_time.strftime("%Y-%m-%d %H:%M:%S")
 
         operation_stats = {
             "total_in_quantity": round(total_in_quantity, 2),
@@ -445,102 +410,32 @@ def get_inventory_detail(inventory_id, page=1, page_size=50):
         if warnings:
             response_data["warnings"] = warnings
 
+        # ========== 【新增】打印最终返回给前端的数据（关键） ==========
+        print("\n【最终返回前端数据】")
+        print(f"1. 库存基本信息：{inventory_dict}")
+        print(f"2. 操作记录总数：{total_operations}")
+        print(f"3. 分页后返回的操作记录数：{len(operation_list)}")
+        print(f"4. 操作记录示例（前3条）：")
+        for idx, op in enumerate(operation_list[:3]):
+            print(
+                f"   第{idx + 1}条：操作类型={op.get('操作类型', '无')} | 操作时间={op.get('操作时间', '空')} | 操作数量={op.get('操作数量', 0)}")
+        print(f"5. 最后操作时间：{last_operation_time}")
+        print("=" * 50 + "\n")
+
         return response_data, 200
 
     except IndexError as e:
         error_trace = traceback.format_exc()
-        print(f"库存详情查询索引异常：{str(e)}\n完整堆栈：{error_trace}")
+        print(f"【异常】库存详情查询索引异常：{str(e)}\n完整堆栈：{error_trace}")
         return {"status": "error", "message": "库存数据索引错误，请检查数据完整性"}, 500
     except TypeError as e:
         error_trace = traceback.format_exc()
-        print(f"库存详情查询类型异常：{str(e)}\n完整堆栈：{error_trace}")
+        print(f"【异常】库存详情查询类型异常：{str(e)}\n完整堆栈：{error_trace}")
         return {"status": "error", "message": "数据类型转换错误，请检查字段格式"}, 500
     except Exception as e:
         error_trace = traceback.format_exc()
-        print(f"获取库存详情异常: {str(e)}\n完整堆栈：{error_trace}")
+        print(f"【异常】获取库存详情异常: {str(e)}\n完整堆栈：{error_trace}")
         return {"status": "error", "message": f"系统异常：{str(e)}"}, 500
-
-
-def batch_update_inventory_status(inventory_ids, csv_data):
-    """批量更新库存状态 - 仅更新状态值，不新增/重命名任何原始字段"""
-    try:
-        inventory_df = csv_data.get("inventory", pd.DataFrame())
-        operation_df = csv_data.get("operation_record", pd.DataFrame())
-
-        if inventory_df.empty:
-            print("警告：库存数据表为空")
-            return
-
-        # 确保状态字段存在（仅值初始化，不新增其他字段）
-        if "状态" not in inventory_df.columns:
-            inventory_df["状态"] = ""
-
-        # 批量处理库存状态更新
-        for inventory_id in inventory_ids:
-            try:
-                # 强化库存ID匹配（兼容空值/字符串ID）
-                inventory_df["库存ID"] = pd.to_numeric(inventory_df["库存ID"], errors="coerce").fillna(-1).astype(int)
-                target_id = int(inventory_id) if str(inventory_id).isdigit() else -1
-                mask = inventory_df["库存ID"] == target_id
-
-                if not mask.any():
-                    print(f"警告：库存ID {inventory_id} 未找到匹配记录")
-                    continue
-
-                # 初始化统计变量
-                qty_stats = {"入库": 0.0, "出库": 0.0, "借": 0.0, "还": 0.0}
-                count_stats = {"入库": 0, "出库": 0, "借": 0, "还": 0}
-
-                if not operation_df.empty:
-                    # 过滤该库存ID的操作记录
-                    operation_df["关联库存ID"] = pd.to_numeric(operation_df["关联库存ID"], errors="coerce").fillna(-1).astype(int)
-                    inventory_mask = operation_df["关联库存ID"] == target_id
-
-                    if inventory_mask.any():
-                        inventory_operations = operation_df[inventory_mask].copy()
-                        inventory_operations["操作数量"] = pd.to_numeric(inventory_operations["操作数量"], errors="coerce").fillna(0.0)
-
-                        # 统计数量和次数
-                        for op_type in ["入库", "出库", "借", "还"]:
-                            op_mask = inventory_operations["操作类型"] == op_type
-                            if op_mask.any():
-                                qty_stats[op_type] = inventory_operations[op_mask]["操作数量"].sum()
-                                count_stats[op_type] = int(op_mask.sum())
-
-                        # 构建状态字符串（仅更新状态值，不碰其他字段）
-                        status_parts = []
-                        if count_stats["入库"] > 0:
-                            status_parts.append(f"入:{count_stats['入库']}次({qty_stats['入库']}个)")
-                        if count_stats["出库"] > 0:
-                            status_parts.append(f"出:{count_stats['出库']}次({qty_stats['出库']}个)")
-                        if count_stats["借"] > 0:
-                            status_parts.append(f"借:{count_stats['借']}次({qty_stats['借']}个)")
-                        if count_stats["还"] > 0:
-                            status_parts.append(f"还:{count_stats['还']}次({qty_stats['还']}个)")
-                        unreturned = round(qty_stats['借'] - qty_stats['还'], 2)
-                        if unreturned > 0:
-                            status_parts.append(f"({unreturned}个未还)")
-                        status = " ".join(status_parts)
-                    else:
-                        status = "无操作记录"
-                else:
-                    status = "无操作记录"
-
-                # 仅更新状态列的值，不修改任何字段名
-                inventory_df.loc[mask, "状态"] = status
-
-            except Exception as e:
-                print(f"更新库存ID {inventory_id} 失败: {str(e)}")
-                continue
-
-        # 写回数据（仅更新状态值，字段结构不变）
-        csv_data["inventory"] = inventory_df
-        print(f"批量更新完成，共处理 {len(inventory_ids)} 个库存ID")
-
-    except Exception as e:
-        print(f"批量更新库存状态异常: {str(e)}")
-        import traceback
-        traceback.print_exc()
 
 
 def edit_inventory(inventory_id, edit_data):

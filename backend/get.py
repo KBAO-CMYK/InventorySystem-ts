@@ -314,135 +314,83 @@ def get_operation_records(operation_type=None, inventory_id=None, start_date=Non
         print(f"查询操作记录异常: {str(e)}")
         return {"status": "error", "message": f"系统异常: {str(e)}"}, 500
 
-
-
-
-def get_last_address_info(data):
-    """
-    获取最后地址信息（核心逻辑）：
-    1. 从inventory表取库存ID最大的记录，提取「关联位置ID」；
-    2. 从location表通过「关联位置ID」匹配「地址ID」，获取地址类型/楼层/架号/框号/包号；
-    【仅内部临时统一ID格式，不修改原DataFrame，避免影响其他函数】
-    """
+def batch_update_inventory_status(inventory_ids, csv_data):
+    """批量更新库存状态 - 仅更新状态值，不新增/重命名任何原始字段"""
     try:
-        # 修正后：datetime.now() 可正常调用
-        print(f"\n=== 获取最后地址信息请求开始 | 时间: {datetime.now()} ===", flush=True)
+        inventory_df = csv_data.get("inventory", pd.DataFrame())
+        operation_df = csv_data.get("operation_record", pd.DataFrame())
 
-        # 1. 读取CSV数据（仅读取，不修改原数据）
-        csv_data = read_csv_data()
-        # 【关键修改1】复制DataFrame副本，避免修改原数据影响其他函数
-        inventory_df = csv_data.get("inventory", pd.DataFrame()).copy()
-        location_df = csv_data.get("location", pd.DataFrame()).copy()
-
-        # 2. 校验inventory表基础条件
         if inventory_df.empty:
-            print(f"[信息] 获取最后地址信息：inventory表数据为空，返回默认值", flush=True)
-            return {
-                "status": "success",
-                "data": {"地址类型": "", "楼层": "", "架号": "", "框号": "", "包号": ""}
-            }, 200
+            print("警告：库存数据表为空")
+            return
 
-        # 校验inventory表必要字段（匹配实际字段名）
-        inv_required_cols = ["库存ID", "关联位置ID"]
-        inv_missing_cols = [col for col in inv_required_cols if col not in inventory_df.columns]
-        if inv_missing_cols:
-            print(f"[错误] inventory.csv缺少必要字段：{', '.join(inv_missing_cols)}", flush=True)
-            return {
-                "status": "error",
-                "message": f"inventory.csv格式错误：缺少字段 {', '.join(inv_missing_cols)}，请检查CSV表头"
-            }, 400
+        # 确保状态字段存在（仅值初始化，不新增其他字段）
+        if "状态" not in inventory_df.columns:
+            inventory_df["状态"] = ""
 
-        # 3. 取inventory表中库存ID最大的记录
-        # 确保库存ID为数值类型（避免字符串排序异常）
-        inventory_df["库存ID"] = pd.to_numeric(inventory_df["库存ID"], errors="coerce")
-        # 过滤掉库存ID为空的记录
-        inv_valid_df = inventory_df.dropna(subset=["库存ID"])
-        if inv_valid_df.empty:
-            print(f"[信息] 获取最后地址信息：inventory表中无有效库存ID记录，返回默认值", flush=True)
-            return {
-                "status": "success",
-                "data": {"地址类型": "", "楼层": "", "架号": "", "框号": "", "包号": ""}
-            }, 200
+        # 批量处理库存状态更新
+        for inventory_id in inventory_ids:
+            try:
+                # 强化库存ID匹配（兼容空值/字符串ID）
+                inventory_df["库存ID"] = pd.to_numeric(inventory_df["库存ID"], errors="coerce").fillna(-1).astype(int)
+                target_id = int(inventory_id) if str(inventory_id).isdigit() else -1
+                mask = inventory_df["库存ID"] == target_id
 
-        # 按库存ID倒序取最后一条
-        inv_latest_record = inv_valid_df.sort_values("库存ID", ascending=False).iloc[0]
-        location_id = inv_latest_record.get("关联位置ID")
-        latest_inv_id = inv_latest_record["库存ID"]
+                if not mask.any():
+                    print(f"警告：库存ID {inventory_id} 未找到匹配记录")
+                    continue
 
-        # 4. 校验关联位置ID是否有效
-        if pd.isna(location_id) or str(location_id).strip() == "":
-            print(f"[信息] 获取最后地址信息：inventory表最新记录（库存ID：{latest_inv_id}）的关联位置ID为空，返回默认值",
-                  flush=True)
-            return {
-                "status": "success",
-                "data": {"地址类型": "", "楼层": "", "架号": "", "框号": "", "包号": ""}
-            }, 200
+                # 初始化统计变量
+                qty_stats = {"入库": 0.0, "出库": 0.0, "借": 0.0, "还": 0.0}
+                count_stats = {"入库": 0, "出库": 0, "借": 0, "还": 0}
 
-        # 【关键修改2】仅临时清洗当前要匹配的location_id，不修改原DataFrame的字段
-        target_location_id = str(location_id).strip()
-        print(f"[信息] 从inventory表获取最新记录：库存ID={latest_inv_id}，关联位置ID={target_location_id}", flush=True)
+                if not operation_df.empty:
+                    # 过滤该库存ID的操作记录
+                    operation_df["关联库存ID"] = pd.to_numeric(operation_df["关联库存ID"], errors="coerce").fillna(-1).astype(int)
+                    inventory_mask = operation_df["关联库存ID"] == target_id
 
-        # 5. 校验location表基础条件
-        if location_df.empty:
-            print(f"[信息] 获取最后地址信息：location表数据为空，返回默认值", flush=True)
-            return {
-                "status": "success",
-                "data": {"地址类型": "", "楼层": "", "架号": "", "框号": "", "包号": ""}
-            }, 200
+                    if inventory_mask.any():
+                        inventory_operations = operation_df[inventory_mask].copy()
+                        inventory_operations["操作数量"] = pd.to_numeric(inventory_operations["操作数量"], errors="coerce").fillna(0.0)
 
-        # 校验location表必要字段（匹配实际字段名）
-        loc_required_cols = ["地址ID", "地址类型", "楼层", "架号", "框号", "包号"]
-        loc_missing_cols = [col for col in loc_required_cols if col not in location_df.columns]
-        if loc_missing_cols:
-            print(f"[错误] location.csv缺少必要字段：{', '.join(loc_missing_cols)}", flush=True)
-            return {
-                "status": "error",
-                "message": f"location.csv格式错误：缺少字段 {', '.join(loc_missing_cols)}，请检查CSV表头"
-            }, 400
+                        # 统计数量和次数
+                        for op_type in ["入库", "出库", "借", "还"]:
+                            op_mask = inventory_operations["操作类型"] == op_type
+                            if op_mask.any():
+                                qty_stats[op_type] = inventory_operations[op_mask]["操作数量"].sum()
+                                count_stats[op_type] = int(op_mask.sum())
 
-        # 6. 从location表匹配地址ID（仅临时转换要匹配的列，不修改原数据）
-        # 【关键修改3】临时创建清洗后的地址ID列（不覆盖原列），用于匹配
-        location_df["_temp_address_id"] = location_df["地址ID"].astype(str).str.strip()
-        loc_filtered_df = location_df[location_df["_temp_address_id"] == target_location_id]
-        # 匹配后删除临时列，不影响原数据
-        location_df.drop(columns=["_temp_address_id"], inplace=True)
+                        # 构建状态字符串（仅更新状态值，不碰其他字段）
+                        status_parts = []
+                        if count_stats["入库"] > 0:
+                            status_parts.append(f"入:{count_stats['入库']}次({qty_stats['入库']}个)")
+                        if count_stats["出库"] > 0:
+                            status_parts.append(f"出:{count_stats['出库']}次({qty_stats['出库']}个)")
+                        if count_stats["借"] > 0:
+                            status_parts.append(f"借:{count_stats['借']}次({qty_stats['借']}个)")
+                        if count_stats["还"] > 0:
+                            status_parts.append(f"还:{count_stats['还']}次({qty_stats['还']}个)")
+                        unreturned = round(qty_stats['借'] - qty_stats['还'], 2)
+                        if unreturned > 0:
+                            status_parts.append(f"({unreturned}个未还)")
+                        status = " ".join(status_parts)
+                    else:
+                        status = "无操作记录"
+                else:
+                    status = "无操作记录"
 
-        if loc_filtered_df.empty:
-            print(f"[信息] 获取最后地址信息：location表中无地址ID={target_location_id}的记录，返回默认值", flush=True)
-            return {
-                "status": "success",
-                "data": {"地址类型": "", "楼层": "", "架号": "", "框号": "", "包号": ""}
-            }, 200
+                # 仅更新状态列的值，不修改任何字段名
+                inventory_df.loc[mask, "状态"] = status
 
-        # 取匹配到的地址记录（地址ID唯一，取第一条）
-        loc_record = loc_filtered_df.iloc[0]
+            except Exception as e:
+                print(f"更新库存ID {inventory_id} 失败: {str(e)}")
+                continue
 
-        # 7. 提取并清洗地址信息
-        address_type = str(loc_record.get("地址类型", "")).strip() if pd.notna(loc_record.get("地址类型")) else ""
-        floor = str(loc_record.get("楼层", "")).strip() if pd.notna(loc_record.get("楼层")) else ""
-        shelf_no = str(loc_record.get("架号", "")).strip() if pd.notna(loc_record.get("架号")) else ""
-        box_no = str(loc_record.get("框号", "")).strip() if pd.notna(loc_record.get("框号")) else ""
-        package_no = str(loc_record.get("包号", "")).strip() if pd.notna(loc_record.get("包号")) else ""
-
-        print(
-            f"[成功] 获取最后地址信息：库存ID={latest_inv_id} → 地址ID={target_location_id} - 地址类型={address_type}, 楼层={floor}, 架号={shelf_no}, 框号={box_no}, 包号={package_no}",
-            flush=True
-        )
-
-        return {
-            "status": "success",
-            "data": {
-                "地址类型": address_type,
-                "楼层": floor,
-                "架号": shelf_no,
-                "框号": box_no,
-                "包号": package_no
-            }
-        }, 200
+        # 写回数据（仅更新状态值，字段结构不变）
+        csv_data["inventory"] = inventory_df
+        print(f"批量更新完成，共处理 {len(inventory_ids)} 个库存ID")
 
     except Exception as e:
-        error_msg = f"获取最后地址信息异常: {str(e)}"
-        print(f"[异常] {error_msg}", flush=True)
+        print(f"批量更新库存状态异常: {str(e)}")
         import traceback
         traceback.print_exc()
-        return {"status": "error", "message": f"系统异常: {str(e)}"}, 500

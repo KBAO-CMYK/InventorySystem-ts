@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { api, formatStockInData, validateFormData, handleApiError } from '../lib/api.ts';
-  import type { ApiSuccessResponse } from '../lib/api.ts';
+  import { api, formatStockInData, validateFormData, handleApiError } from '../lib/api';
+  import type { ApiSuccessResponse } from '../lib/api';
   import ImageUpload from '../image/ImageUpload.svelte';
 
   // ========== 类型定义 ==========

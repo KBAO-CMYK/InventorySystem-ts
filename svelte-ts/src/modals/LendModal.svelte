@@ -8,7 +8,7 @@
     message: string;
   }
 
-  /** 借出表单数据接口 */
+  /** 借出表单数据接口 - 保留时间相关属性 */
   interface LendForm {
     operator: string;
     remark: string;
@@ -33,7 +33,7 @@
   let batchLendQuantities: Record<number | string, string | number> = {}
   let validationStates: Map<number | string, ValidationState> = new Map()
 
-  // 表单数据
+  // 表单数据 - 保留时间相关属性
   let lendForm: LendForm = {
     operator: '',
     remark: '',
@@ -117,19 +117,11 @@
       validationStates.set(item.库存ID, { isValid: true, message: '' })
     })
 
-    // 设置默认出库时间
-    if (lendForm.use_auto_out_time) {
-      const now = new Date()
-      const year = now.getFullYear()
-      const month = String(now.getMonth() + 1).padStart(2, '0')
-      const day = String(now.getDate()).padStart(2, '0')
-      const hour = String(now.getHours()).padStart(2, '0')
-      const minute = String(now.getMinutes()).padStart(2, '0')
-      lendForm.out_time = `${year}-${month}-${day} ${hour}:${minute}`
-    }
+    // 【核心修改】移除前端自动生成时间的逻辑，仅重置时间输入框
+    lendForm.out_time = ''
   }
 
-  // 智能格式化时间输入
+  // 智能格式化时间输入 - 保留（用于手动输入格式化）
   function formatTimeInput(e: Event): void {
     const target = e.target as HTMLInputElement
     let value = target.value.trim()
@@ -259,20 +251,19 @@
     updateValidationState(itemId, finalValue)
   }
 
-  // 验证批量借出数据（优化：提交时强制检查空值）
+  // 验证批量借出数据（保留时间验证逻辑）
   function validateBatchLend(): boolean {
     try {
-      // 验证操作人员
+      // 验证操作人
       if (!lendForm.operator.trim()) {
-        throw new Error('请填写操作人员')
+        throw new Error('请填写操作人')
       }
 
-      // 验证时间格式
-      if (!lendForm.use_auto_out_time && !lendForm.out_time.trim()) {
-        throw new Error('请填写借出时间')
-      }
-
+      // 保留时间验证：仅当不勾选自动生成时验证
       if (!lendForm.use_auto_out_time) {
+        if (!lendForm.out_time.trim()) {
+          throw new Error('请填写借出时间')
+        }
         const timeRegex1 = /^\d{4}-\d{2}-\d{2} \d{2}$/
         const timeRegex2 = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/
         if (!timeRegex1.test(lendForm.out_time) && !timeRegex2.test(lendForm.out_time)) {
@@ -311,7 +302,7 @@
     }
   }
 
-  // 准备批量借出请求数据（适配对象）
+  // 准备批量借出请求数据（核心修改：自动生成时不传out_time，由后端处理）
   function prepareBatchLendData(): any {
     const lendItems = selectedItems.map(item => ({
       inventory_id: item.库存ID,
@@ -324,17 +315,11 @@
       remark: lendForm.remark
     }
 
-    // 处理借出时间
+    // 【核心修改】仅当不勾选自动生成且有输入时，才传递out_time给后端
     if (!lendForm.use_auto_out_time && lendForm.out_time) {
       requestData.out_time = lendForm.out_time
-    } else {
-      const now = new Date()
-      const year = now.getFullYear()
-      const month = String(now.getMonth() + 1).padStart(2, '0')
-      const day = String(now.getDate()).padStart(2, '0')
-      const hour = String(now.getHours()).padStart(2, '0')
-      requestData.out_time = `${year}-${month}-${day} ${hour}`
     }
+    // 勾选自动生成时，不传递out_time，由后端自动生成
 
     return requestData
   }
@@ -362,7 +347,6 @@
     onClose()
   }
 </script>
-
 <div class="modal-overlay" class:show={show}>
   <div class="modal-content large-modal" on:click|stopPropagation>
     <div class="modal-header">
@@ -377,12 +361,12 @@
           <h3>公共信息</h3>
           <div class="form-row">
             <div class="form-group">
-              <label for="lend_operator">操作人员 *</label>
+              <label for="lend_operator">操作人 *</label>
               <input
                 id="lend_operator"
                 type="text"
                 bind:value={lendForm.operator}
-                placeholder="请输入操作人员姓名"
+                placeholder="请输入操作人姓名"
                 required
                 disabled={loading}
               />
@@ -399,6 +383,7 @@
             </div>
           </div>
 
+          <!-- 保留手动输入时间的UI -->
           <div class="form-group">
             <label class="checkbox-label">
               <input
@@ -406,7 +391,7 @@
                 bind:checked={lendForm.use_auto_out_time}
                 disabled={loading}
               />
-              自动生成借出时间
+              自动生成借出时间（由后端生成）
             </label>
           </div>
 

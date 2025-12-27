@@ -6,8 +6,8 @@
   // 导入共享CSS（根据项目配置调整导入方式）
   import './stock-in-shared.css';
   // 导入API类型（若需要）
-  import type { ApiSuccessResponse } from '../lib/api.ts';
-  import { api } from '../lib/api.ts';
+  import type { ApiSuccessResponse } from '../lib/api';
+  import { api } from '../lib/api';
 
   // ========== 公共类型定义 ==========
   type ActiveTab = 'batch' | 'single';

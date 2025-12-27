@@ -14,12 +14,12 @@
     quantity: number;
   }
 
-  /** 提交请求数据接口 */
+  /** 提交请求数据接口 - 调整：lendTime改为可选（自动生成时不传） */
   interface ReturnRequestData {
     return_items: ReturnItem[];
     operator: string;
     remark: string;
-    lendTime: string;
+    lendTime?: string; // 可选：手动输入时传递，自动生成时不传递
     inventoryIds: (number | string)[];
   }
 
@@ -37,9 +37,10 @@
   let validationStates: Map<number | string, ValidationState> = new Map()    // 验证状态Map
 
   // 表单公共数据
-  let operator: string = ''                // 操作人员
+  let operator: string = ''                // 操作人
   let remark: string = ''                  // 归还备注
   let lendTime: string = ''                // 归还时间
+  let useAutoLendTime: boolean = true      // 【新增】是否自动生成归还时间（默认勾选）
 
   // 响应式变量先声明再赋值（Svelte TS兼容写法）
   let inventoryIds: (number | string)[] = []
@@ -53,8 +54,12 @@
   // ========== 响应式逻辑 ==========
   // 实时提取选中商品的库存ID
   $: inventoryIds = selectedItems.map(item => item.库存ID)
-  // 响应式判断确认按钮禁用状态
-  $: confirmDisabled = loading || !operator.trim() || !lendTime.trim() || !validateAllQuantities() || selectedItems.length === 0
+  // 响应式判断确认按钮禁用状态 - 【修改】自动生成时不验证lendTime
+  $: confirmDisabled = loading
+    || !operator.trim()
+    || (!useAutoLendTime && !validateTimeFormat(lendTime))
+    || !validateAllQuantities()
+    || selectedItems.length === 0
 
   // 初始化：模态框显示时重置数据
   $: if (show) {
@@ -69,7 +74,7 @@
     return Math.max(0, totalStock - borrowedQty) // 确保非负
   }
 
-  // 初始化模态框数据
+  // 初始化模态框数据 - 【修改】移除前端默认填充时间的逻辑
   function initModalData(): void {
     // 重置数量和验证状态
     batchLendQuantities = new Map()
@@ -83,19 +88,17 @@
       validationStates.set(item.库存ID, validateQuantityInput(defaultQty, item))
     })
 
-    // 初始化默认归还时间（仅为空时）
-    if (!lendTime.trim()) {
-      const now = new Date()
-      const year = now.getFullYear()
-      const month = String(now.getMonth() + 1).padStart(2, '0')
-      const day = String(now.getDate()).padStart(2, '0')
-      const hour = String(now.getHours()).padStart(2, '0')
-      lendTime = `${year}-${month}-${day} ${hour}`
+    // 【修改】自动生成时清空时间，不再默认填充
+    if (useAutoLendTime) {
+      lendTime = ''
     }
   }
 
   // 时间格式校验（复用原有逻辑，仅适配变量名）
   function validateTimeFormat(time: string): boolean {
+    // 自动生成时直接返回true（无需验证）
+    if (useAutoLendTime) return true
+
     if (!time.trim()) return false
     const timeRegex1 = /^\d{4}-\d{2}-\d{2} \d{2}$/          // YYYY-MM-DD HH
     const timeRegex2 = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/ // YYYY-MM-DD HH:MM:SS
@@ -217,7 +220,7 @@
     }
   }
 
-  // 确认归还逻辑
+  // 确认归还逻辑 - 【修改】适配自动生成时间的验证
   function handleConfirm(): void {
     // 【新增防御性校验】确保 onConfirm 是函数，避免报错
     if (typeof onConfirm !== 'function') {
@@ -226,16 +229,22 @@
       return;
     }
 
-    // 1. 操作人员校验
+    // 1. 操作人校验
     if (!operator.trim()) {
-      showMessage('请填写操作人员姓名', 'error')
+      showMessage('请填写操作人姓名', 'error')
       return
     }
 
-    // 2. 归还时间校验
-    if (!validateTimeFormat(lendTime)) {
-      showMessage('时间格式错误，请使用：YYYY-MM-DD HH（例：2025-12-11 14）或 YYYY-MM-DD HH:MM:SS（例：2025-12-11 14:30:00）', 'error')
-      return
+    // 2. 归还时间校验 - 【修改】仅当不自动生成时验证
+    if (!useAutoLendTime) {
+      if (!lendTime.trim()) {
+        showMessage('请填写归还时间', 'error')
+        return
+      }
+      if (!validateTimeFormat(lendTime)) {
+        showMessage('时间格式错误，请使用：YYYY-MM-DD HH（例：2025-12-11 14）或 YYYY-MM-DD HH:MM:SS（例：2025-12-11 14:30:00）', 'error')
+        return
+      }
     }
 
     // 3. 数量校验
@@ -251,7 +260,7 @@
       return
     }
 
-    // 4. 组装提交数据
+    // 4. 组装提交数据 - 【修改】自动生成时不传递lendTime
     const lendItems: ReturnItem[] = selectedItems.map(item => ({
       inventory_id: item.库存ID,
       quantity: parseInt(batchLendQuantities.get(item.库存ID) || '0')
@@ -261,21 +270,26 @@
       return_items: lendItems,       // 替换return_itemss
       operator: operator.trim(),
       remark: remark.trim(),
-      lendTime: lendTime.trim(),   // 替换returnTime
       inventoryIds: inventoryIds
+    }
+
+    // 仅当不自动生成且有值时，添加lendTime字段
+    if (!useAutoLendTime && lendTime.trim()) {
+      requestData.lendTime = lendTime.trim()
     }
 
     // 执行父组件确认逻辑
     onConfirm(requestData)
   }
 
-  // 关闭模态框（重置所有数据）
+  // 关闭模态框（重置所有数据）- 【修改】重置自动生成开关
   function handleClose(): void {
     // 重置表单
     operator = ''
     remark = ''
-    lendTime = ''                 // 替换returnTime
-    batchLendQuantities.clear()   // 替换batchReturnQuantities
+    lendTime = ''
+    useAutoLendTime = true       // 重置自动生成开关为默认值
+    batchLendQuantities.clear()
     validationStates.clear()
     // 执行父组件关闭逻辑
     onClose()
@@ -289,6 +303,9 @@
 
   // 【修复正则错误】formatTimeInput 函数
   function formatTimeInput(e: Event): void {
+    // 自动生成时不执行格式化
+    if (useAutoLendTime) return
+
     const target = e.target as HTMLInputElement
     clearTimeout(timeFormatTimer)
     timeFormatTimer = setTimeout(() => {
@@ -327,12 +344,12 @@
           <h3>公共信息</h3>
           <div class="form-row">
             <div class="form-group">
-              <label for="lend_operator">操作人员 *</label>
+              <label for="lend_operator">操作人 *</label>
               <input
                 id="lend_operator"
                 type="text"
                 bind:value={operator}
-                placeholder="请输入操作人员姓名"
+                placeholder="请输入操作人姓名"
                 required
                 disabled={loading}
                 maxlength="20"
@@ -351,19 +368,34 @@
             </div>
           </div>
 
+          <!-- 【新增】自动生成时间复选框 -->
           <div class="form-group">
-            <label for="lend_out_time">归还时间 *</label>
-            <input
-              id="lend_out_time"
-              type="text"
-              bind:value={lendTime}
-              on:input={formatTimeInput}
-              placeholder="例：2025-12-11 14 或 2025-12-11 14:30:00"
-              maxlength="19"
-              disabled={loading}
-            />
-            <small class="form-hint">格式：YYYY-MM-DD HH（四位年+日期+小时），支持扩展：YYYY-MM-DD HH:MM:SS</small>
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                bind:checked={useAutoLendTime}
+                disabled={loading}
+              />
+              自动生成归还时间（由后端生成）
+            </label>
           </div>
+
+          <!-- 【修改】仅当不自动生成时显示时间输入框 -->
+          {#if !useAutoLendTime}
+            <div class="form-group">
+              <label for="lend_out_time">归还时间 *</label>
+              <input
+                id="lend_out_time"
+                type="text"
+                bind:value={lendTime}
+                on:input={formatTimeInput}
+                placeholder="例：2025-12-11 14 或 2025-12-11 14:30:00"
+                maxlength="19"
+                disabled={loading}
+              />
+              <small class="form-hint">格式：YYYY-MM-DD HH（四位年+日期+小时），支持扩展：YYYY-MM-DD HH:MM:SS</small>
+            </div>
+          {/if}
         </div>
 
         <!-- 差异化归还数量设置 -->
@@ -571,6 +603,21 @@
     margin-bottom: 8px;
     font-weight: 500;
     color: #555;
+  }
+
+  /* 【新增】复选框标签样式 */
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    color: #555;
+  }
+
+  .checkbox-label input {
+    width: auto;
+    margin: 0;
   }
 
   .form-hint {

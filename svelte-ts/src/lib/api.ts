@@ -9,7 +9,7 @@ interface RequestOptions extends Omit<RequestInit, 'body'> {
 }
 
 /** 通用API成功响应类型 */
-interface ApiSuccessResponse<T = any> {
+export interface ApiSuccessResponse<T = any> {
   status: 'success';
   message?: string;
   data?: T;
@@ -18,7 +18,7 @@ interface ApiSuccessResponse<T = any> {
 
 /** 图片添加（上传）请求参数类型（匹配后端 /api/image_add 接口） */
 interface ImageAddParams {
-  featureId: number | string; // 商品特征ID（必传）
+  featureId: number | string; // 商品特征ID（必传，无undefined）
   productCode?: string;       // 关联商品货号（可选）
   overwrite: boolean;         // 是否覆盖现有图片
   keepOriginalName: boolean;  // 是否保留原文件名
@@ -141,11 +141,11 @@ interface InventoryRawData {
 interface InventoryDisplayData {
   id: number | string | undefined;
   productId: number | string | undefined;
-  featureId: number | string | '';
+  featureId: number | string | ''; // 确保无undefined（空字符串兜底）
   productCode: string;
   productType: string;
   status: string;
-  batch: number;
+  batch: number; // 数字类型，无undefined
   defectiveQuantity: number;
   stockQuantity: number;
   totalInQuantity: number;
@@ -153,13 +153,13 @@ interface InventoryDisplayData {
   totalLendQuantity: number;
   totalReturnQuantity: number;
   addressId: number | string | undefined;
-  addressType: number | string;
+  addressType: number | string; // 无undefined
   floor: string;
   shelfNo: string;
   boxNo: string;
   packageNo: string;
   unit: string;
-  manufacturerId: number | string | '';
+  manufacturerId: number | string | ''; // 确保无undefined（空字符串兜底）
   manufacturerName: string;
   manufacturerAddress: string;
   manufacturerPhone: string;
@@ -175,6 +175,7 @@ interface InventoryDisplayData {
   imagePath: string;
   fullImageUrl: string;
   lastOperationTime: string;
+  operator?: string; // 可选字段（允许undefined）
 }
 
 /** 表单验证规则类型 */
@@ -195,7 +196,7 @@ interface FormattedEditInventoryData {
   厂家: string;
   厂家地址: string;
   电话: string;
-  地址类型: number | string;
+  地址类型: number | string; // 无undefined
   楼层: string;
   架号: string;
   框号: string;
@@ -296,9 +297,8 @@ interface LendReturnOutFormData {
  */
 async function request<T = ApiSuccessResponse>(
   endpoint: string,
-  options: RequestOptions = {},
-  isImageRequest = false
-): Promise<T | Blob> {
+  options: RequestOptions = {}
+): Promise<T> {
   try {
     const fetchOptions: RequestInit = {
       headers: { ...options.headers },
@@ -337,16 +337,8 @@ async function request<T = ApiSuccessResponse>(
       return { status: 'success', message: '操作成功' } as T;
     }
 
-    // 分情况处理响应：图片请求返回Blob，其他请求返回JSON
-    if (isImageRequest) {
-      return response.blob();
-    } else if (endpoint === '/upload-image' || endpoint === '/image_add') { // 新增适配image_add
-      const data = await response.json();
-      return normalizeData(data) as T;
-    } else {
-      const data = await response.json();
-      return normalizeData(data) as T;
-    }
+    const data = await response.json();
+    return normalizeData(data) as T;
 
     // 标准化空值（前端展示友好）
     function normalizeData(obj: any): any {
@@ -362,6 +354,51 @@ async function request<T = ApiSuccessResponse>(
       }
       return obj;
     }
+  } catch (error) {
+    console.error('API请求错误:', error);
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+/**
+ * 图片请求专用函数
+ */
+async function imageRequest(endpoint: string, options: RequestOptions = {}): Promise<Blob> {
+  try {
+    const fetchOptions: RequestInit = {
+      headers: { ...options.headers },
+      ...options,
+    } as RequestInit;
+
+    // 区分请求格式：multipart/form-data（图片上传）不处理JSON序列化
+    if (
+      (fetchOptions.headers as Record<string, string>)['Content-Type'] !== 'multipart/form-data' &&
+      options.body
+    ) {
+      fetchOptions.body = JSON.stringify(options.body, (key, value) => {
+        if (value === null || value === undefined) return '';
+        return value;
+      });
+      if (!(fetchOptions.headers as Record<string, string>)['Content-Type']) {
+        (fetchOptions.headers as Record<string, string>)['Content-Type'] = 'application/json';
+      }
+    }
+
+    const response = await fetch(`${API_BASE}${endpoint}`, fetchOptions);
+
+    // 检查响应状态
+    if (!response.ok) {
+      let errorMessage = '请求失败';
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.message || errorMessage;
+      } catch (e) {
+        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      }
+      throw new Error(errorMessage);
+    }
+
+    return response.blob();
   } catch (error) {
     console.error('API请求错误:', error);
     throw error instanceof Error ? error : new Error(String(error));
@@ -444,13 +481,15 @@ export const api = {
   getImageByFeatureId: (featureId: number | string): Promise<ImageByFeatureIdResult> => {
     return new Promise(async (resolve, reject) => {
       try {
-        if (!featureId || isNaN(Number(featureId))) {
-          throw new Error('无效的商品特征ID');
+        // 严格校验：排除undefined和非数字
+        const featureIdNum = Number(featureId);
+        if (isNaN(featureIdNum)) {
+          throw new Error('无效的商品特征ID（必须为数字）');
         }
         // 请求图片二进制流
-        const blob = await request(`/get_image_by_feature_id/${featureId}`, {
+        const blob = await imageRequest(`/get_image_by_feature_id/${featureIdNum}`, {
           method: 'GET',
-        }, true) as Blob;
+        });
 
         // 生成临时URL并返回（包含释放方法）
         const imageUrl = URL.createObjectURL(blob);
@@ -474,8 +513,9 @@ export const api = {
   addProductImage: (params: ImageAddParams): Promise<ImageAddResponse> => {
     return new Promise(async (resolve, reject) => {
       try {
-        // 1. 参数前置校验
-        if (!params.featureId || isNaN(Number(params.featureId))) {
+        // 1. 严格参数校验：排除undefined和非数字
+        const featureIdNum = Number(params.featureId);
+        if (isNaN(featureIdNum)) {
           throw new Error('无效的商品特征ID（必须为数字）');
         }
         if (!params.file) {
@@ -484,7 +524,7 @@ export const api = {
 
         // 2. 构建FormData（匹配后端表单格式）
         const formData = new FormData();
-        formData.append('featureId', String(params.featureId)); // 特征ID（字符串格式）
+        formData.append('featureId', String(featureIdNum)); // 确保是字符串格式的数字
         if (params.productCode) {
           formData.append('productCode', params.productCode.trim()); // 商品货号
         }
@@ -534,7 +574,7 @@ export const api = {
           throw new Error('特征ID和图片路径不能同时为空');
         }
 
-        // 格式化参数（空值处理）
+        // 格式化参数：确保featureId是数字或空字符串（无undefined）
         const submitParams = {
           featureId: params.featureId ? Number(params.featureId) : '',
           imagePath: params.imagePath || '',
@@ -561,9 +601,9 @@ export const api = {
           throw new Error('特征ID列表和图片路径列表不能同时为空');
         }
 
-        // 格式化参数（空值处理 + 类型转换）
+        // 格式化参数：过滤undefined，确保类型正确
         const submitParams = {
-          featureIds: params.featureIds?.map(id => Number(id)) || [],
+          featureIds: (params.featureIds || []).filter(id => id !== undefined).map(id => Number(id)),
           imagePaths: params.imagePaths || [],
           relatedProductIds: params.relatedProductIds || [],
           cleanCsv: params.cleanCsv ?? true, // 默认清理CSV关联
@@ -622,8 +662,13 @@ export const api = {
     inventoryId: number | string,
     params: { page?: number; page_size?: number } = { page: 1, page_size: 50 }
   ): Promise<ApiSuccessResponse> => {
+    // 确保inventoryId是数字（排除undefined）
+    const inventoryIdNum = Number(inventoryId);
+    if (isNaN(inventoryIdNum)) {
+      return Promise.reject(new Error('无效的库存ID'));
+    }
     const queryString = buildQueryParams(params);
-    return request(`/inventory/${inventoryId}${queryString ? `?${queryString}` : ''}`);
+    return request(`/inventory/${inventoryIdNum}${queryString ? `?${queryString}` : ''}`);
   },
 
   // 兼容旧函数名
@@ -631,17 +676,29 @@ export const api = {
     api.editInventory(inventoryId, data),
 
   // 库存编辑
-  editInventory: (inventoryId: number | string, data: any): Promise<ApiSuccessResponse> =>
-    request(`/inventory/${inventoryId}/edit`, {
+  editInventory: (inventoryId: number | string, data: any): Promise<ApiSuccessResponse> => {
+    // 确保inventoryId是数字（排除undefined）
+    const inventoryIdNum = Number(inventoryId);
+    if (isNaN(inventoryIdNum)) {
+      return Promise.reject(new Error('无效的库存ID'));
+    }
+    return request(`/inventory/${inventoryIdNum}/edit`, {
       method: 'POST',
       body: data,
-    }),
+    });
+  },
 
   // 删除库存记录
-  deleteInventory: (inventoryId: number | string): Promise<ApiSuccessResponse> =>
-    request(`/inventory/${inventoryId}`, {
+  deleteInventory: (inventoryId: number | string): Promise<ApiSuccessResponse> => {
+    // 确保inventoryId是数字（排除undefined）
+    const inventoryIdNum = Number(inventoryId);
+    if (isNaN(inventoryIdNum)) {
+      return Promise.reject(new Error('无效的库存ID'));
+    }
+    return request(`/inventory/${inventoryIdNum}`, {
       method: 'DELETE',
-    }),
+    });
+  },
 
   // 操作记录查询
   getOperationRecords: (params: {
@@ -650,9 +707,10 @@ export const api = {
     startDate?: string;
     endDate?: string;
   } = {}): Promise<ApiSuccessResponse> => {
+    // 格式化参数：排除undefined
     const queryString = buildQueryParams({
       operation_type: params.operationType,
-      inventory_id: params.inventoryId,
+      inventory_id: params.inventoryId ? Number(params.inventoryId) : undefined,
       start_date: params.startDate,
       end_date: params.endDate,
     });
@@ -668,9 +726,10 @@ export const api = {
   } = {}): Promise<{ success: true; filename: string }> => {
     return new Promise(async (resolve, reject) => {
       try {
+        // 格式化参数：排除undefined
         const queryString = buildQueryParams({
           operation_type: params.operationType || '出库',
-          inventory_id: params.inventoryId,
+          inventory_id: params.inventoryId ? Number(params.inventoryId) : undefined,
           start_date: params.startDate,
           end_date: params.endDate,
         });
@@ -741,7 +800,8 @@ export const api = {
           const manufacturer = item.manufacturer || {};
           const location = item.location || {};
 
-          const manufacturerId = manufacturer.厂家ID === null ? '' : manufacturer.厂家ID;
+          // 确保厂家ID无undefined（空字符串兜底）
+          const manufacturerId = manufacturer.厂家ID === null || manufacturer.厂家ID === undefined ? '' : manufacturer.厂家ID;
 
           return [
             inventory.库存ID || '',
@@ -802,11 +862,26 @@ export const api = {
       method: 'POST',
       body: params,
     }),
-};
 
-// 兼容旧函数名
-api.getStockOutRecords = api.getOperationRecords;
-api.exportStockOutCSV = api.exportOperationRecordsCSV;
+  // 添加这些方法来替代动态添加的属性
+  getStockOutRecords: (params: {
+    operationType?: string;
+    inventoryId?: number | string;
+    startDate?: string;
+    endDate?: string;
+  } = {}): Promise<ApiSuccessResponse> => {
+    return api.getOperationRecords(params);
+  },
+
+  exportStockOutCSV: (params: {
+    operationType?: string;
+    inventoryId?: number | string;
+    startDate?: string;
+    endDate?: string;
+  } = {}): Promise<{ success: true; filename: string }> => {
+    return api.exportOperationRecordsCSV(params);
+  },
+};
 
 // ===================== 工具函数（优化适配图片添加） =====================
 /**
@@ -914,13 +989,14 @@ export const formatInventoryForDisplay = (
   const location = inventoryData.location || {};
   const operationStats = inventoryData.operation_stats || {};
 
-  // 优先使用特征ID图片接口
-  const featureId = feature.商品特征ID || '';
+  // 优先使用特征ID图片接口（确保featureId无undefined）
+  const featureId = feature.商品特征ID === undefined ? '' : feature.商品特征ID;
   const imagePath = product.图片路径 || '';
-  const fullImageUrl = featureId
+  const fullImageUrl = featureId && !isNaN(Number(featureId))
     ? `${API_BASE}/get_image_by_feature_id/${featureId}`
     : (imagePath ? `${API_BASE.replace('/api', '')}/${imagePath}` : '');
 
+  // 核心修复：所有字段兜底，确保无undefined
   return {
     id: inventory.库存ID,
     productId: product.商品ID,
@@ -928,26 +1004,26 @@ export const formatInventoryForDisplay = (
     productCode: product.货号 || '',
     productType: product.类型 || '',
     status: inventory.状态 || '正常',
-    batch: inventory.批次 || 1,
-    defectiveQuantity: inventory.次品数量 || 0,
-    stockQuantity: operationStats.current_stock || inventory.库存数量 || 0,
-    totalInQuantity: operationStats.total_in_quantity || 0,
-    totalOutQuantity: operationStats.total_out_quantity || 0,
-    totalLendQuantity: operationStats.total_lend_quantity || 0,
-    totalReturnQuantity: operationStats.total_return_quantity || 0,
+    batch: Number(inventory.批次) || 1, // 兜底为1，确保是数字
+    defectiveQuantity: Number(inventory.次品数量) || 0,
+    stockQuantity: Number(operationStats.current_stock || inventory.库存数量) || 0,
+    totalInQuantity: Number(operationStats.total_in_quantity) || 0,
+    totalOutQuantity: Number(operationStats.total_out_quantity) || 0,
+    totalLendQuantity: Number(operationStats.total_lend_quantity) || 0,
+    totalReturnQuantity: Number(operationStats.total_return_quantity) || 0,
     addressId: location.地址ID,
-    addressType: location.地址类型 || 1,
-    floor: location.楼层 || '',
+    addressType: location.地址类型 !== undefined ? location.地址类型 : 1, // 兜底为1，无undefined
+    floor: String(location.楼层 || ''), // 转换为字符串，兜底为空
     shelfNo: location.架号 || '',
     boxNo: location.框号 || '',
     packageNo: location.包号 || '',
     unit: inventory.单位 || '',
-    manufacturerId: manufacturer.厂家ID === null ? '' : manufacturer.厂家ID,
+    manufacturerId: manufacturer.厂家ID === null || manufacturer.厂家ID === undefined ? '' : manufacturer.厂家ID,
     manufacturerName: manufacturer.厂家 || '',
     manufacturerAddress: manufacturer.厂家地址 || '',
     manufacturerPhone: manufacturer.电话 || '',
-    unitPrice: feature.单价 || 0,
-    weight: feature.重量 || 0,
+    unitPrice: Number(feature.单价) || 0,
+    weight: Number(feature.重量) || 0,
     specification: feature.规格 || '',
     material: feature.材质 || '',
     color: feature.颜色 || '',
@@ -958,6 +1034,7 @@ export const formatInventoryForDisplay = (
     imagePath: imagePath,
     fullImageUrl: fullImageUrl,
     lastOperationTime: operationStats.last_operation_time || '',
+    operator: '', // 兜底为空字符串
   };
 };
 
@@ -968,22 +1045,23 @@ export const formatInventoryForDisplay = (
 export const formatEditInventoryData = (
   formData: Partial<InventoryDisplayData>
 ): FormattedEditInventoryData => {
+  // 核心修复：所有字段兜底，确保无undefined
   return {
     货号: formData.productCode || '',
     类型: formData.productType || '',
-    单价: formData.unitPrice || 0,
-    重量: formData.weight || 0,
+    单价: Number(formData.unitPrice) || 0,
+    重量: Number(formData.weight) || 0,
     厂家: formData.manufacturerName || '',
     厂家地址: formData.manufacturerAddress || '',
     电话: formData.manufacturerPhone || '',
-    地址类型: formData.addressType || 1,
-    楼层: formData.floor || '',
+    地址类型: formData.addressType !== undefined ? formData.addressType : 1, // 兜底为1
+    楼层: String(formData.floor || ''),
     架号: formData.shelfNo || '',
     框号: formData.boxNo || '',
     包号: formData.packageNo || '',
-    批次: formData.batch || 1,
+    批次: Number(formData.batch) || 1,
     状态: formData.status || '正常',
-    次品数量: formData.defectiveQuantity || 0,
+    次品数量: Number(formData.defectiveQuantity) || 0,
     用途: formData.usage || '',
     规格: formData.specification || '',
     备注: formData.remark || '',
@@ -1009,14 +1087,14 @@ export const formatStockInData = (formData: StockInFormData): {
     stock_in_items: formData.items.map(item => ({
       货号: item.productCode.trim(),
       类型: item.productType,
-      地址类型: parseInt(String(item.addressType)),
-      楼层: parseInt(String(item.floor)),
-      入库数量: parseFloat(String(item.quantity)),
+      地址类型: Number(item.addressType) || 1, // 兜底为1
+      楼层: Number(item.floor) || 0, // 兜底为0
+      入库数量: Number(item.quantity) || 0,
       架号: item.shelfNo.trim() || '',
       框号: item.boxNo.trim() || '',
       包号: item.packageNo.trim() || '',
-      单价: parseFloat(String(item.unitPrice)) || 0,
-            重量: parseFloat(String(item.weight)) || 0,
+      单价: Number(item.unitPrice) || 0,
+      重量: Number(item.weight) || 0,
       厂家: item.manufacturerName.trim() || '',
       厂家地址: item.manufacturerAddress.trim() || '',
       电话: item.manufacturerPhone.trim() || '',
@@ -1028,7 +1106,7 @@ export const formatStockInData = (formData: StockInFormData): {
       形状: item.shape.trim() || '',
       风格: item.style.trim() || '',
       图片路径: item.imagePath || item.fullImageUrl?.replace(`${API_BASE.replace('/api', '')}/`, '') || '',
-      批次: parseInt(String(item.batch)) || 1,
+      批次: Number(item.batch) || 1,
     })),
   };
 };
@@ -1044,8 +1122,8 @@ export const formatLendData = (formData: LendReturnOutFormData): {
   return {
     操作时间: formData.operateTime || '',
     lend_items: formData.items.map(item => ({
-      库存ID: parseInt(String(item.inventoryId)),
-      借出数量: parseFloat(String(item.quantity)),
+      库存ID: Number(item.inventoryId), // 确保是数字（调用前已校验）
+      借出数量: Number(item.quantity) || 0,
       操作人: formData.operator || '系统',
       备注: item.remark || '',
     })),
@@ -1063,8 +1141,8 @@ export const formatReturnData = (formData: LendReturnOutFormData): {
   return {
     操作时间: formData.operateTime || '',
     return_items: formData.items.map(item => ({
-      库存ID: parseInt(String(item.inventoryId)),
-      归还数量: parseFloat(String(item.quantity)),
+      库存ID: Number(item.inventoryId), // 确保是数字（调用前已校验）
+      归还数量: Number(item.quantity) || 0,
       操作人: formData.operator || '系统',
       备注: item.remark || '',
     })),
@@ -1082,8 +1160,8 @@ export const formatStockOutData = (formData: LendReturnOutFormData): {
   return {
     操作时间: formData.operateTime || '',
     stock_out_items: formData.items.map(item => ({
-      库存ID: parseInt(String(item.inventoryId)),
-      出库数量: parseFloat(String(item.quantity)),
+      库存ID: Number(item.inventoryId), // 确保是数字（调用前已校验）
+      出库数量: Number(item.quantity) || 0,
       操作人: formData.operator || '系统',
       备注: item.remark || '',
     })),
@@ -1099,8 +1177,8 @@ export const processImagePath = (
   imageUrl: string | undefined,
   featureId: number | string | undefined
 ): string => {
-  // 优先用特征ID生成图片接口URL
-  if (featureId && !isNaN(Number(featureId))) {
+  // 核心修复：严格校验featureId，排除undefined
+  if (featureId !== undefined && featureId !== null && !isNaN(Number(featureId))) {
     return `${API_BASE}/get_image_by_feature_id/${featureId}`;
   }
 

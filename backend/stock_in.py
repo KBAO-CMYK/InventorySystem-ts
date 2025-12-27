@@ -228,8 +228,8 @@ def batch_stock_in(data):
                     continue
 
                 # 处理其他字段
-                unit_price = float(item.get("单价", 0)) if item.get("单价") else 0.0
-                weight = float(item.get("重量", 0)) if item.get("重量") else 0.0
+                unit_price = float(item.get("单价", 0)) if item.get("单价") else ""
+                weight = float(item.get("重量", 0)) if item.get("重量") else ""
                 factory_name = str(item.get("厂家", "")).strip() if item.get("厂家") else ""
                 factory_address = str(item.get("厂家地址", "")).strip() if item.get("厂家地址") else ""
                 factory_phone = str(item.get("电话", "")).strip() if item.get("电话") else ""

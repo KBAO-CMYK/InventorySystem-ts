@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount } from 'svelte';
-  import { api, handleApiError } from '../lib/api.ts';
-  import type { ApiSuccessResponse } from '../lib/api.ts';
+  import { api, handleApiError } from '../lib/api';
+  import type { ApiSuccessResponse } from '../lib/api';
   // 导入网络常量
   import { NETWORK_CONSTANTS, UPLOAD_CONSTANTS } from '../lib/constants.ts';
 

@@ -5,9 +5,9 @@
   import InventoryManagement from './InventoryManagement.svelte'
   import StockOutRecords from './Records.svelte'
   // 适配 api.ts 导入（注意后缀改为 .ts，若项目配置了路径别名可保持不变）
-  import { api, handleApiError } from './lib/api.ts'
+  import { api, handleApiError } from './lib/api'
   // 导入 api.ts 中定义的核心类型
-  import type { ApiSuccessResponse } from './lib/api.ts'
+  import type { ApiSuccessResponse } from './lib/api'
 
   // ========== 类型定义 ==========
   /** 活跃标签类型 */

@@ -1,7 +1,9 @@
 from inventory_management import *
 import pandas as pd
 from datetime import datetime
-
+from get import *
+#1、借出
+#2、归还
 
 def product_lend(data):
     """批量借出功能 - 移除库存扣减计算，保留原始字段结构"""
@@ -43,7 +45,7 @@ def product_lend(data):
         elif "Operator" in data:
             operator = data["Operator"]
         if operator is None or not str(operator).strip():
-            return {"status": "error", "message": "缺少操作人员字段"}, 400
+            return {"status": "error", "message": "缺少操作人字段"}, 400
 
         remark = ""
         if "remark" in data:
@@ -79,24 +81,34 @@ def product_lend(data):
             inventory_df = pd.DataFrame(columns=["库存ID", "库存数量", "商品名称", "货号"])
         if operation_df.empty:
             operation_df = pd.DataFrame(
-                columns=["操作ID", "关联库存ID", "操作类型", "操作数量", "操作时间", "操作人员", "备注"])
+                columns=["操作ID", "关联库存ID", "操作类型", "操作数量", "操作时间", "操作人", "备注"])
 
-        # 4. 时间格式处理
+        # 4. 时间格式处理（核心修改：明确区分自动生成/手动输入）
+        # ===== 自动生成时间：直接输出完整的YYYY-MM-DD HH:MM:SS格式 =====
+        is_auto_time = False  # 标记是否为自动生成的时间
         if not out_time:
+            is_auto_time = True
             out_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"DEBUG product_lend: 自动生成时间: {out_time}")
+        # ===== 手动输入时间：仅对不完整格式进行补全 =====
         else:
             try:
+                # 先尝试解析完整格式，无需补全
                 datetime.strptime(out_time, "%Y-%m-%d %H:%M:%S")
             except ValueError:
                 try:
+                    # 补全 YYYY-MM-DD HH -> YYYY-MM-DD HH:00:00
                     datetime.strptime(out_time, "%Y-%m-%d %H")
                     out_time = out_time + ":00:00"
+                    print(f"DEBUG product_lend: 手动输入时间补全（HH）: {out_time}")
                 except ValueError:
                     try:
+                        # 补全 YYYY-MM-DDTHH:MM -> YYYY-MM-DD HH:MM:00
                         datetime.strptime(out_time, "%Y-%m-%dT%H:%M")
                         out_time = out_time.replace("T", " ") + ":00"
+                        print(f"DEBUG product_lend: 手动输入时间补全（THH:MM）: {out_time}")
                     except ValueError:
-                        return {"status": "error", "message": "时间格式不正确"}, 400
+                        return {"status": "error", "message": "时间格式不正确，支持：YYYY-MM-DD HH:MM:SS、YYYY-MM-DD HH、YYYY-MM-DDTHH:MM"}, 400
 
         operator = str(operator).strip()
         remark = str(remark).strip()
@@ -240,8 +252,8 @@ def product_lend(data):
                     "关联库存ID": inventory_id,
                     "操作类型": "借",
                     "操作数量": quantity,
-                    "操作时间": out_time,
-                    "操作人员": operator,
+                    "操作时间": out_time,  # 使用处理后的完整时间
+                    "操作人": operator,
                     "备注": remark
                 })
 
@@ -290,7 +302,7 @@ def product_lend(data):
                 "error_count": len(lend_items) - success_count,
                 "total_processed": len(lend_items),
                 "operator": operator,
-                "out_time": out_time,
+                "out_time": out_time,  # 返回处理后的完整时间
                 "remark": remark
             }
         }
@@ -369,7 +381,7 @@ def product_return(data):
             operator = data["Operator"]
 
         if operator is None or not str(operator).strip():
-            return {"status": "error", "message": "缺少操作人员字段"}, 400
+            return {"status": "error", "message": "缺少操作人字段"}, 400
 
         remark = ""
         if "remark" in data:
@@ -405,7 +417,7 @@ def product_return(data):
             inventory_df = pd.DataFrame(columns=["库存ID", "库存数量"])
         if operation_df.empty:
             operation_df = pd.DataFrame(
-                columns=["操作ID", "关联库存ID", "操作类型", "操作数量", "操作时间", "操作人员", "备注"])
+                columns=["操作ID", "关联库存ID", "操作类型", "操作数量", "操作时间", "操作人", "备注"])
 
         # 4. 处理时间
         if not return_time:
@@ -579,7 +591,7 @@ def product_return(data):
                     "操作类型": "还",
                     "操作数量": return_quantity,
                     "操作时间": return_time,
-                    "操作人员": operator,
+                    "操作人": operator,
                     "备注": remark
                 })
 
