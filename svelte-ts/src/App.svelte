@@ -1,34 +1,25 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  //import StockIn from './StockIn.svelte'
   import StockIn from './stock_in/ProductStockIn.svelte'
   import InventoryManagement from './InventoryManagement.svelte'
   import StockOutRecords from './Records.svelte'
-  // 适配 api.ts 导入（注意后缀改为 .ts，若项目配置了路径别名可保持不变）
   import { api, handleApiError } from './lib/api'
-  // 导入 api.ts 中定义的核心类型
   import type { ApiSuccessResponse } from './lib/api'
 
   // ========== 类型定义 ==========
-  /** 活跃标签类型 */
   type ActiveTab = 'stockIn' | 'inventory' | 'stockOutRecords'
-
-  /** 消息类型 */
   type MessageType = 'info' | 'success' | 'error' | 'warning'
 
-  /** 消息对象类型 */
   interface Message {
     text: string
     type: MessageType
   }
 
-  /** 缓存数据项类型 */
   interface CacheItem<T = any> {
     data: T | null
     timestamp: number
   }
 
-  /** 整体缓存对象类型 */
   interface DataCache {
     inventory: CacheItem
     stockOut: CacheItem
@@ -36,18 +27,18 @@
     floors: CacheItem<number[]>
   }
 
-  // ========== 共享状态（带类型注解） ==========
+  // ========== 共享状态 ==========
   let activeTab: ActiveTab = 'stockIn'
   let loading: boolean = false
   let batchLoading: boolean = false
   let detailLoading: boolean = false
   let message: Message = { text: '', type: 'info' }
 
-  // ========== 共享数据（带类型注解） ==========
+  // ========== 共享数据 ==========
   let productTypes: string[] = []
   let floors: number[] = [1, 2, 3, 4, 5]
 
-  // ========== 缓存机制（带类型注解） ==========
+  // ========== 缓存机制 ==========
   const CACHE_DURATION: number = 5 * 60 * 1000
   let dataCache: DataCache = {
     inventory: { data: null, timestamp: 0 },
@@ -56,8 +47,7 @@
     floors: { data: null, timestamp: 0 }
   }
 
-  // ========== 共享函数（带类型注解） ==========
-  /** 显示提示消息 */
+  // ========== 共享函数 ==========
   function showMessage(text: string, type: MessageType = 'info'): void {
     message = { text, type }
     setTimeout(() => {
@@ -67,7 +57,6 @@
     }, 5000)
   }
 
-  /** 防抖函数（泛型支持） */
   function debounce<T extends (...args: any[]) => any>(
     func: T,
     wait: number
@@ -83,7 +72,6 @@
     }
   }
 
-  /** 加载商品类型 */
   async function loadProductTypes(): Promise<void> {
     const now = Date.now()
     if (dataCache.productTypes.data && now - dataCache.productTypes.timestamp < CACHE_DURATION) {
@@ -106,7 +94,6 @@
     }
   }
 
-  /** 加载楼层选项 */
   async function loadFloors(): Promise<void> {
     const now = Date.now()
     if (dataCache.floors.data && now - dataCache.floors.timestamp < CACHE_DURATION) {
@@ -129,7 +116,6 @@
     }
   }
 
-  /** 健康检查 */
   async function healthCheck(): Promise<void> {
     try {
       const result = await api.healthCheck() as ApiSuccessResponse
@@ -142,7 +128,6 @@
     }
   }
 
-  /** 刷新所有数据 */
   async function refreshAllData(): Promise<void> {
     loading = true
     try {
@@ -161,9 +146,7 @@
 
   // ========== 初始化加载 ==========
   onMount(() => {
-    // 先进行健康检查
     healthCheck()
-    // 然后加载所有数据
     refreshAllData()
   })
 </script>
@@ -244,31 +227,51 @@
 </div>
 
 <style>
-  /* 完全重置，移除所有默认边距和滚动 */
+  /* 完全重置，确保无任何默认边距和内边距 */
   :global(*), :global(*::before), :global(*::after) {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
   }
 
-  :global(html), :global(body) {
+  /* 确保根元素100%占满视口，无滚动条 */
+  :global(html) {
     width: 100vw;
     height: 100vh;
-    overflow: hidden; /* 完全禁用滚动 */
+    overflow: hidden;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
   }
 
   :global(body) {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background-color: #f5f5f5;
     color: #333;
   }
 
-  /* 外层容器完全占满浏览器 */
+  /* 主容器：绝对定位，完全贴紧浏览器 */
   .app-container {
-    width: 100vw;
-    height: 100vh;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     display: flex;
     flex-direction: column;
+    min-width: 100%;
+    min-height: 100%;
+    overflow: hidden;
   }
 
   /* 头部区域 */
@@ -278,13 +281,15 @@
     align-items: center;
     padding: 1rem 2rem;
     border-bottom: 2px solid #e0e0e0;
-    flex-shrink: 0; /* 固定高度不压缩 */
+    flex-shrink: 0;
     background: white;
+    min-height: 80px;
   }
 
   .header h1 {
     color: #2c3e50;
     font-size: clamp(1.5rem, 3vw, 2.2rem);
+    white-space: nowrap;
   }
 
   .status-bar {
@@ -292,6 +297,7 @@
     align-items: center;
     gap: 1rem;
     flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .loading {
@@ -348,6 +354,7 @@
     cursor: pointer;
     transition: all 0.3s ease;
     font-size: 1.2rem;
+    flex-shrink: 0;
   }
 
   .btn-refresh:hover:not(:disabled) {
@@ -364,7 +371,7 @@
   /* 标签栏 */
   .tabs {
     display: flex;
-    gap: 0; /* 移除标签间空隙 */
+    gap: 0;
     background: white;
     border-bottom: 1px solid #e0e0e0;
     flex-shrink: 0;
@@ -379,6 +386,8 @@
     font-weight: 500;
     transition: all 0.3s ease;
     font-size: clamp(0.9rem, 1.5vw, 1rem);
+    white-space: nowrap;
+    min-height: 60px;
   }
 
   .tabs button:hover {
@@ -393,33 +402,67 @@
 
   /* 主内容区域 - 完全填充剩余空间 */
   .main-content {
-    flex: 1; /* 占满剩余高度 */
+    flex: 1;
     padding: 2rem;
     background: white;
-    overflow-y: auto; /* 内容溢出时内部滚动 */
+    overflow-y: auto;
     overflow-x: hidden;
+    position: relative;
+    min-height: 0; /* 重要：让flex项可以收缩 */
   }
 
-  /* 响应式适配 - 小屏幕也完全占满 */
+  /* 美化主内容区域的滚动条 */
+  .main-content::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .main-content::-webkit-scrollbar-track {
+    background: #f1f1f1;
+  }
+
+  .main-content::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+  }
+
+  .main-content::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+  }
+
+  /* Firefox 滚动条样式 */
+  .main-content {
+    scrollbar-width: thin;
+    scrollbar-color: #c1c1c1 #f1f1f1;
+  }
+
+  /* 响应式适配 */
   @media (max-width: 768px) {
     .header {
       flex-direction: column;
       gap: 1rem;
       text-align: center;
       padding: 1rem;
+      min-height: auto;
     }
 
     .status-bar {
       justify-content: center;
       width: 100%;
+      flex-wrap: wrap;
     }
 
     .tabs {
       flex-direction: column;
     }
 
+    .tabs button {
+      min-height: 50px;
+      padding: 0.8rem;
+    }
+
     .main-content {
       padding: 1rem;
+      -webkit-overflow-scrolling: touch;
     }
 
     .message {
@@ -437,10 +480,34 @@
   @media (max-width: 480px) {
     .header h1 {
       font-size: 1.5rem;
+      white-space: normal;
     }
 
     .tabs button {
-      padding: 0.8rem;
+      padding: 0.6rem;
+      min-height: 45px;
+      font-size: 0.9rem;
+    }
+
+    .main-content {
+      padding: 0.5rem;
+    }
+  }
+
+  /* 确保所有内容都能正确缩放 */
+  @media (max-height: 600px) {
+    .header {
+      padding: 0.5rem 1rem;
+      min-height: 60px;
+    }
+
+    .tabs button {
+      min-height: 40px;
+      padding: 0.5rem;
+    }
+
+    .main-content {
+      padding: 1rem;
     }
   }
 </style>
