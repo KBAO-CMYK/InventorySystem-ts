@@ -8,6 +8,7 @@
   export let showMessage: (msg: string, type: string) => void = () => {}
   export let refreshInventory: () => Promise<void> | void = () => {}
   export let getRealTimeStock: ((inventoryId: number | string) => number) | null = null // 接收实时库存函数
+  export let clearAllSelected: () => void = () => {} // 确认接收父组件的清除选中项函数
 
   // ========== 接口定义 ==========
   /** 批量出库表单数据接口 */
@@ -419,6 +420,9 @@
         // 如果有成功的记录，显示导出确认
         if (successfulStockOutRecords.length > 0) {
           showExportConfirmModal = true
+        } else {
+          // 没有可导出记录时，直接清除选中项
+          clearAllSelected() // 【新增】批量出库成功且无导出记录时自动清除选中项
         }
 
         closeBatchStockOutModal()
@@ -494,6 +498,7 @@
       downloadCSVFile(csvContent, filename)
 
       showMessage(`成功导出 ${successfulStockOutRecords.length} 条出库记录`, 'success')
+      clearAllSelected() // 【新增】导出出库记录成功后自动清除选中项
     } catch (error) {
       console.error('导出出库记录失败:', error)
       showMessage(handleApiError(error, '导出出库记录失败'), 'error')
@@ -624,6 +629,7 @@
       downloadCSVFile(csvContent, filename)
 
       showMessage(`成功导出 ${selectedItems.length} 条记录`, 'success')
+      clearAllSelected() // 【新增】导出选中项CSV成功后自动清除选中项
     } catch (error) {
       console.error('导出CSV失败:', error)
       showMessage(handleApiError(error, '导出失败'), 'error')

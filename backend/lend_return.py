@@ -2,11 +2,12 @@ from inventory_management import *
 import pandas as pd
 from datetime import datetime
 from get import *
+from check import *
 #1、借出
 #2、归还
 
 def product_lend(data):
-    """批量借出功能 - 移除库存扣减计算，保留原始字段结构"""
+    """批量借出功能 - 适配特殊库存（第一条入库=-1）跳过校验，保留原始字段结构"""
     try:
         if not data:
             return {"status": "error", "message": "请求数据不能为空"}, 400
@@ -72,9 +73,7 @@ def product_lend(data):
 
         # 处理重复字段（消除.1后缀，保留原始字段名）
         if not inventory_df.empty:
-            # 重命名.1后缀为自定义名称（避免pandas自动生成）
             inventory_df.columns = inventory_df.columns.str.replace('.1', '_duplicate')
-            # 可选：删除完全重复的列（保留第一个）
             inventory_df = inventory_df.loc[:, ~inventory_df.columns.duplicated()]
 
         if inventory_df.empty:
@@ -83,27 +82,22 @@ def product_lend(data):
             operation_df = pd.DataFrame(
                 columns=["操作ID", "关联库存ID", "操作类型", "操作数量", "操作时间", "操作人", "备注"])
 
-        # 4. 时间格式处理（核心修改：明确区分自动生成/手动输入）
-        # ===== 自动生成时间：直接输出完整的YYYY-MM-DD HH:MM:SS格式 =====
-        is_auto_time = False  # 标记是否为自动生成的时间
+        # 4. 时间格式处理
+        is_auto_time = False
         if not out_time:
             is_auto_time = True
             out_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"DEBUG product_lend: 自动生成时间: {out_time}")
-        # ===== 手动输入时间：仅对不完整格式进行补全 =====
         else:
             try:
-                # 先尝试解析完整格式，无需补全
                 datetime.strptime(out_time, "%Y-%m-%d %H:%M:%S")
             except ValueError:
                 try:
-                    # 补全 YYYY-MM-DD HH -> YYYY-MM-DD HH:00:00
                     datetime.strptime(out_time, "%Y-%m-%d %H")
                     out_time = out_time + ":00:00"
                     print(f"DEBUG product_lend: 手动输入时间补全（HH）: {out_time}")
                 except ValueError:
                     try:
-                        # 补全 YYYY-MM-DDTHH:MM -> YYYY-MM-DD HH:MM:00
                         datetime.strptime(out_time, "%Y-%m-%dT%H:%M")
                         out_time = out_time.replace("T", " ") + ":00"
                         print(f"DEBUG product_lend: 手动输入时间补全（THH:MM）: {out_time}")
@@ -126,10 +120,11 @@ def product_lend(data):
 
         print(f"DEBUG product_lend: 库存索引（存在的ID）: {list(inventory_index.keys())}")
 
-        # 6. 验证借出项目 + 强化库存数量空值处理
+        # 6. 验证借出项目 + 适配特殊库存跳过校验
         valid_items = []
         error_messages = []
         inventory_details = {}
+        special_stock_ids = []  # 记录特殊库存ID
 
         for idx, item in enumerate(lend_items):
             if not isinstance(item, dict):
@@ -165,21 +160,27 @@ def product_lend(data):
                 error_messages.append(f"第{idx + 1}项: 库存ID {inventory_id} 不是有效数字")
                 continue
 
-            try:
-                quantity = float(quantity)
-                if quantity <= 0:
-                    error_messages.append(f"库存ID {inventory_id}: 借出数量必须大于0（当前值：{quantity}）")
-                    continue
-            except (ValueError, TypeError):
-                error_messages.append(f"库存ID {inventory_id}: 借出数量 {quantity} 不是有效数字")
+            # 调用特殊库存校验函数
+            is_valid, check_msg, current_stock = check_stock_quantity(
+                inventory_id=inventory_id,
+                operation_type="借",
+                operation_quantity=quantity,
+                csv_data=csv_data
+            )
+            if not is_valid:
+                error_messages.append(f"第{idx + 1}项: {check_msg}")
                 continue
 
+            # 标记特殊库存
+            if current_stock == -1.0:
+                special_stock_ids.append(inventory_id)
+
             if inventory_id not in inventory_index:
-                error_messages.append(f"库存ID {inventory_id}: 未找到库存记录")
+                error_messages.append(f"第{idx + 1}项: 库存ID {inventory_id} 未找到库存记录")
                 continue
 
             idx_pos = inventory_index[inventory_id]
-            # 强化库存数量空值处理（核心修复：避免空值）
+            # 强化库存数量空值处理
             current_stock = inventory_df.at[idx_pos, "库存数量"]
             if pd.isna(current_stock) or current_stock == "" or current_stock is None:
                 current_stock = 0.0
@@ -189,7 +190,7 @@ def product_lend(data):
                 except (ValueError, TypeError):
                     current_stock = 0.0
 
-            # 移除「库存数量不足」的校验逻辑（允许借出数量大于库存）
+            # 获取商品信息
             product_name = "未知商品"
             product_code = "未知货号"
             if "商品名称" in inventory_df.columns:
@@ -203,16 +204,18 @@ def product_lend(data):
                 "index": idx_pos,
                 "product_name": product_name,
                 "product_code": product_code,
-                "current_stock": current_stock
+                "current_stock": current_stock,
+                "is_special_stock": current_stock == -1.0
             }
 
             valid_items.append({
                 "inventory_id": inventory_id,
-                "quantity": quantity
+                "quantity": float(quantity)
             })
 
         print(f"DEBUG product_lend: 错误详情列表: {error_messages}")
         print(f"DEBUG product_lend: 有效借出项目数: {len(valid_items)}")
+        print(f"DEBUG product_lend: 特殊库存ID列表: {special_stock_ids}")
 
         if len(valid_items) == 0:
             return {
@@ -228,7 +231,7 @@ def product_lend(data):
         except Exception as e:
             return {"status": "error", "message": f"生成记录ID失败: {str(e)}"}, 500
 
-        # 8. 批量处理借出（移除库存扣减计算，库存数量保持不变）
+        # 8. 批量处理借出（移除库存扣减计算）
         success_count = 0
         new_operation_records = []
         updated_inventory_ids = set()
@@ -242,17 +245,13 @@ def product_lend(data):
                 idx_pos = inventory_info["index"]
                 current_stock = inventory_info["current_stock"]
 
-                # 移除库存扣减计算：不再修改库存数量
-                # 原逻辑：new_stock = current_stock - quantity
-                # 原逻辑：inventory_df.at[idx_pos, "库存数量"] = float(new_stock)
-
                 # 创建借出操作记录
                 new_operation_records.append({
                     "操作ID": record_ids[i],
                     "关联库存ID": inventory_id,
                     "操作类型": "借",
                     "操作数量": quantity,
-                    "操作时间": out_time,  # 使用处理后的完整时间
+                    "操作时间": out_time,
                     "操作人": operator,
                     "备注": remark
                 })
@@ -261,7 +260,7 @@ def product_lend(data):
                 success_count += 1
 
                 print(
-                    f"DEBUG product_lend: 成功借出（无库存计算）- 库存ID: {inventory_id}, 借出数量: {quantity}, 库存保持不变")
+                    f"DEBUG product_lend: 成功借出（无库存计算）- 库存ID: {inventory_id}, 借出数量: {quantity}, 特殊库存: {inventory_info['is_special_stock']}")
 
             except Exception as e:
                 error_msg = f"库存ID {inventory_id}: 处理失败 - {str(e)}"
@@ -271,19 +270,13 @@ def product_lend(data):
         # 9. 保存操作记录和库存数据
         if success_count > 0:
             try:
-                # 更新操作记录
                 if len(new_operation_records) > 0:
                     new_records_df = pd.DataFrame(new_operation_records)
                     operation_df = pd.concat([operation_df, new_records_df], ignore_index=True)
                     csv_data["operation_record"] = operation_df
 
-                # 更新库存数据（字段结构不变，库存数量未修改）
                 csv_data["inventory"] = inventory_df
-
-                # 调用校准函数：仅更新状态值，不修改字段
                 batch_update_inventory_status(list(updated_inventory_ids), csv_data)
-
-                # 写入CSV
                 write_success = write_csv_data(csv_data)
                 if not write_success:
                     return {"status": "error", "message": "数据保存失败"}, 500
@@ -293,17 +286,19 @@ def product_lend(data):
                 print(f"ERROR product_lend: {error_msg}")
                 return {"status": "error", "message": error_msg}, 500
 
-        # 10. 构建响应（移除after_stock计算，保持原库存值）
+        # 10. 构建响应（新增特殊库存标记）
         response_data = {
             "status": "success" if success_count == len(lend_items) else "partial_success",
-            "message": f"借出完成！成功: {success_count} 个，失败: {len(lend_items) - success_count} 个",
+            "message": f"借出完成！成功: {success_count} 个，失败: {len(lend_items) - success_count} 个（含{len(special_stock_ids)}个特殊库存）",
             "data": {
                 "success_count": success_count,
                 "error_count": len(lend_items) - success_count,
                 "total_processed": len(lend_items),
                 "operator": operator,
-                "out_time": out_time,  # 返回处理后的完整时间
-                "remark": remark
+                "out_time": out_time,
+                "remark": remark,
+                "special_stock_count": len(special_stock_ids),
+                "special_stock_ids": special_stock_ids
             }
         }
 
@@ -322,8 +317,9 @@ def product_lend(data):
                         "product_code": info.get("product_code", ""),
                         "lend_quantity": item["quantity"],
                         "before_stock": info.get("current_stock", 0),
-                        "after_stock": info.get("current_stock", 0),  # 移除扣减计算，保持原库存
-                        "record_id": record_ids[i] if i < len(record_ids) else 0
+                        "after_stock": info.get("current_stock", 0),
+                        "record_id": record_ids[i] if i < len(record_ids) else 0,
+                        "is_special_stock": info.get("is_special_stock", False)
                     })
             response_data["data"]["success_details"] = success_details
 
@@ -341,7 +337,7 @@ def product_lend(data):
 
 
 def product_return(data):
-    """批量归还功能 - 移除库存增加计算，保留原始字段结构"""
+    """批量归还功能 - 移除库存增加计算，保留原始字段结构，新增归还数量不超过借出数量校验"""
     try:
         if not data:
             return {"status": "error", "message": "请求数据不能为空"}, 400
@@ -450,27 +446,51 @@ def product_return(data):
             if inv_id != -1:
                 inventory_index[inv_id] = idx
 
-        # 6. 分析借出记录（仅校验是否有借出记录）
+        # 6. 分析借出/归还记录，计算净借出数量（核心修改点1）
         print(f"DEBUG: 操作记录表中的操作类型有: {operation_df['操作类型'].unique() if not operation_df.empty else []}")
-        lend_operation_types = ["借"]
-        lend_type_mask = operation_df["操作类型"].isin(lend_operation_types)
-        lend_records = operation_df[lend_type_mask].copy()
 
-        print(f"DEBUG: 找到 {len(lend_records)} 条借出记录")
-        if len(lend_records) > 0:
-            print(f"DEBUG: 借出记录中的库存ID: {lend_records['关联库存ID'].unique()}")
+        # 初始化净借出数量字典
+        net_lend_quantity = {}
+
+        if not operation_df.empty:
+            # 清理数据：转换关联库存ID和操作数量为数值类型
+            operation_df["关联库存ID"] = pd.to_numeric(operation_df["关联库存ID"], errors="coerce").fillna(-1).astype(
+                int)
+            operation_df["操作数量"] = pd.to_numeric(operation_df["操作数量"], errors="coerce").fillna(0.0).astype(
+                float)
+
+            # 筛选借出记录
+            lend_operation_types = ["借"]
+            lend_type_mask = operation_df["操作类型"].isin(lend_operation_types)
+            lend_records = operation_df[lend_type_mask].copy()
+
+            # 筛选归还记录
+            return_operation_types = ["还"]
+            return_type_mask = operation_df["操作类型"].isin(return_operation_types)
+            return_records = operation_df[return_type_mask].copy()
+
+            print(f"DEBUG: 找到 {len(lend_records)} 条借出记录")
+            print(f"DEBUG: 找到 {len(return_records)} 条归还记录")
+
+            # 按库存ID汇总借出数量
+            lend_summary = lend_records.groupby("关联库存ID")["操作数量"].sum().to_dict()
+
+            # 按库存ID汇总已归还数量
+            return_summary = return_records.groupby("关联库存ID")["操作数量"].sum().to_dict()
+
+            # 计算净借出数量（总借出 - 总已归还）
+            all_inventory_ids = set(lend_summary.keys()).union(set(return_summary.keys()))
+            for inv_id in all_inventory_ids:
+                total_lend = lend_summary.get(inv_id, 0.0)
+                total_returned = return_summary.get(inv_id, 0.0)
+                net_lend_quantity[inv_id] = total_lend - total_returned
+                print(
+                    f"DEBUG: 库存ID {inv_id} - 总借出: {total_lend}, 总已归还: {total_returned}, 可归还净数量: {net_lend_quantity[inv_id]}")
 
         # 仅记录有借出记录的库存ID
-        inventory_has_lend = set()
-        for _, record in lend_records.iterrows():
-            try:
-                inv_id = int(record["关联库存ID"])
-                inventory_has_lend.add(inv_id)
-            except (ValueError, TypeError) as e:
-                print(f"DEBUG: 解析借出记录失败: {e}")
-                continue
+        inventory_has_lend = set(net_lend_quantity.keys())
 
-        # 7. 验证归还项目 + 强化库存数量空值处理
+        # 7. 验证归还项目 + 强化库存数量空值处理 + 新增归还数量校验（核心修改点2）
         valid_items = []
         error_messages = []
         inventory_details = {}
@@ -518,6 +538,14 @@ def product_return(data):
 
                 if inventory_id not in inventory_has_lend:
                     error_messages.append(f"库存ID {inventory_id}: 没有借出记录，无法归还")
+                    continue
+
+                # 新增校验：归还数量不能超过可归还净数量
+                available_return_quantity = net_lend_quantity.get(inventory_id, 0.0)
+                if return_quantity > available_return_quantity:
+                    error_messages.append(
+                        f"库存ID {inventory_id}: 归还数量({return_quantity})超过可归还数量({available_return_quantity})"
+                    )
                     continue
 
                 # 获取当前库存数量（强化空值处理）

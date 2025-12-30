@@ -8,16 +8,16 @@ from utils import *
 from config import *
 from inventory_management import *
 from get import *
+from check import *
 
-
-
+# ===================== 批量出库函数（适配特殊库存规则） =====================
 def batch_stock_out(data):
-    """优化的批量出库功能（修复ID生成+库存ID=0兼容）"""
+    """批量出库功能：特殊库存（第一条入库=-1）跳过充足性校验"""
     try:
         if not data:
             return {"status": "error", "message": "请求数据不能为空"}, 400
 
-        # 参数模式识别与验证
+        # 参数模式识别与验证（原有逻辑不变）
         is_unified_mode = False
         stock_out_items = []
 
@@ -27,12 +27,11 @@ def batch_stock_out(data):
             if not isinstance(inventory_ids, list) or len(inventory_ids) == 0:
                 return {"status": "error", "message": "库存ID列表不能为空"}, 400
 
-            # 验证库存ID格式（强制兼容0：明确允许0作为合法值）
             try:
                 validated_ids = []
                 for inv_id in inventory_ids:
                     try:
-                        inv_id_int = int(inv_id)  # 0会被正确转为int(0)
+                        inv_id_int = int(inv_id)
                         validated_ids.append(inv_id_int)
                     except (ValueError, TypeError):
                         return {
@@ -57,7 +56,6 @@ def batch_stock_out(data):
             if not isinstance(stock_out_items, list) or len(stock_out_items) == 0:
                 return {"status": "error", "message": "差异化出库列表不能为空"}, 400
 
-            # 批量验证差异化列表（强化0值兼容）
             validated_items = []
             for idx, item in enumerate(stock_out_items):
                 if not isinstance(item, dict):
@@ -73,7 +71,6 @@ def batch_stock_out(data):
                     }, 400
 
                 try:
-                    # 明确允许inventory_id=0
                     inventory_id = int(item["inventory_id"])
                     out_quantity = float(item["out_quantity"])
                     validated_items.append({
@@ -108,7 +105,7 @@ def batch_stock_out(data):
             inventory_df = pd.DataFrame(
                 columns=["库存ID", "关联商品特征ID", "关联位置ID", "关联厂家ID", "库存数量", "次品数量", "批次", "状态",
                          "单位"],
-                dtype=int  # 强制列类型为int，避免0被转为其他类型
+                dtype=int
             )
         if operation_df.empty:
             operation_df = pd.DataFrame(
@@ -133,43 +130,51 @@ def batch_stock_out(data):
         operator = str(data["operator"]).strip()
         remark = str(data.get("remark", "")).strip()
 
-        # 构建库存索引 - 核心修复：强制保留0作为有效ID
+        # 构建库存索引（保留0兼容）
         try:
-            # 关键修改1：库存ID转换时，仅将NaN设为-1，0保留为int(0)
-            inventory_df["库存ID"] = pd.to_numeric(inventory_df["库存ID"], errors="coerce")  # 非数字转NaN
-            inventory_df["库存ID"] = inventory_df["库存ID"].fillna(-1)  # NaN→-1（无效ID）
-            inventory_df["库存ID"] = inventory_df["库存ID"].astype(int)  # 0会被保留为int(0)
-
-            # 关键修改2：构建索引时明确包含0
+            inventory_df["库存ID"] = pd.to_numeric(inventory_df["库存ID"], errors="coerce").fillna(-1).astype(int)
             inventory_index = {}
             for idx, row in inventory_df.iterrows():
                 inv_id = row["库存ID"]
-                # 仅排除-1（无效ID），0被视为有效ID
                 if inv_id != -1:
                     inventory_index[inv_id] = idx
         except Exception as e:
             return {"status": "error", "message": f"库存数据格式错误: {str(e)}"}, 500
 
-        # 过滤无效库存ID并检查数据完整性（核心修复：0被视为有效）
+        # 过滤无效库存ID并校验数量（适配特殊库存）
         valid_items = []
         invalid_items = []
-        inventory_details = {}  # 存储库存详情
+        inventory_details = {}
+        special_stock_ids = []  # 记录特殊库存ID
 
         for item in stock_out_items:
             inventory_id = item["inventory_id"]
-            # 关键修改3：存在性判断仅排除-1和不在索引中的值，0会被正常匹配
+            out_quantity = item["out_quantity"]
+
+            # 调用校验函数（适配特殊库存规则）
+            is_valid, check_msg, current_stock = check_stock_quantity(
+                inventory_id=inventory_id,
+                operation_type="出库",
+                operation_quantity=out_quantity,
+                csv_data=csv_data
+            )
+            if not is_valid:
+                invalid_items.append(check_msg)
+                continue
+
+            # 标记特殊库存
+            if current_stock == -1.0:
+                special_stock_ids.append(inventory_id)
+
             if inventory_id in inventory_index:
                 idx = inventory_index[inventory_id]
                 try:
-                    # 获取商品信息（强化0值兼容）
+                    # 获取商品信息（原有逻辑）
                     product_name = "未知商品"
                     product_code = "未知货号"
-
-                    # 获取关联特征ID（允许0）
                     feature_id = inventory_df.at[idx, "关联商品特征ID"]
                     feature_id = pd.to_numeric(feature_id, errors="coerce") if feature_id is not None else -1
 
-                    # 特征ID不为-1时（兼容0），读取商品信息
                     if feature_id != -1:
                         feature_df = csv_data.get("feature", pd.DataFrame())
                         if not feature_df.empty and "商品特征ID" in feature_df.columns:
@@ -177,12 +182,9 @@ def batch_stock_out(data):
                                 -1).astype(int)
                             feature_mask = feature_df["商品特征ID"] == feature_id
                             if feature_mask.any():
-                                # 获取商品ID（允许0）
                                 product_id = feature_df[feature_mask].iloc[0].get("关联商品ID")
                                 product_id = pd.to_numeric(product_id,
                                                            errors="coerce") if product_id is not None else -1
-
-                                # 商品ID不为-1时（兼容0），读取商品名称/货号
                                 if product_id != -1:
                                     product_df = csv_data.get("product", pd.DataFrame())
                                     if not product_df.empty and "商品ID" in product_df.columns:
@@ -193,42 +195,42 @@ def batch_stock_out(data):
                                             product_name = product_df[product_mask].iloc[0].get("商品名称", "未知商品")
                                             product_code = product_df[product_mask].iloc[0].get("货号", "未知货号")
 
-                    # 存储库存详情（明确包含0的情况）
+                    # 存储库存详情（标记是否为特殊库存）
                     inventory_details[inventory_id] = {
                         "index": idx,
                         "product_name": product_name,
-                        "product_code": product_code
+                        "product_code": product_code,
+                        "current_stock": current_stock,
+                        "is_special_stock": current_stock == -1.0
                     }
                     valid_items.append(item)
                 except (ValueError, KeyError) as e:
                     invalid_items.append(f"库存ID {inventory_id}（支持0）：数据不完整或格式错误 - {str(e)}")
             else:
-                # 明确提示0是合法值，仅当0不在库存中时才报错
                 invalid_items.append(f"库存ID {inventory_id}（支持0）：未找到对应的库存记录")
 
         if len(valid_items) == 0:
             return {
                 "status": "error",
-                "message": "所有库存ID均无效（含0）",
+                "message": "所有库存ID均无效或数量校验不通过（含0）",
                 "error_details": invalid_items
             }, 400
 
-        # 批量处理出库
+        # 批量处理出库（仅更新状态+添加记录，特殊库存不校验数量）
         success_count = 0
         error_count = len(invalid_items)
         error_messages = invalid_items.copy()
         new_operation_records = []
         updated_inventory_ids = set()
 
-        # 预生成操作记录ID（修复后的函数：兼容0值ID）
+        # 预生成操作记录ID
         try:
             next_record_id = generate_auto_id_df(operation_df, "操作ID")
             record_ids = [next_record_id + i for i in range(len(valid_items))]
         except Exception as e:
             return {"status": "error", "message": f"生成记录ID失败: {str(e)}"}, 500
 
-        # 批量创建出库操作记录
-        # 临时存储出库数量（用于库存扣减）
+        # 批量创建操作记录（移除额外备注，仅保留原始remark）
         csv_data["temp_out_items"] = valid_items
         for i, item in enumerate(valid_items):
             inventory_id = item["inventory_id"]
@@ -236,16 +238,17 @@ def batch_stock_out(data):
 
             try:
                 inventory_info = inventory_details[inventory_id]
+                is_special = inventory_info["is_special_stock"]
 
-                # 创建操作记录（明确兼容库存ID=0）
+                # 创建操作记录（仅保留原始remark，移除额外标注）
                 new_operation_records.append({
                     "操作ID": record_ids[i],
-                    "关联库存ID": inventory_id,  # 0会被正常写入
+                    "关联库存ID": inventory_id,
                     "操作类型": "出库",
                     "操作数量": out_quantity,
                     "操作时间": out_time,
                     "操作人": operator,
-                    "备注": remark
+                    "备注": remark  # 仅保留原始备注，不添加任何额外内容
                 })
 
                 updated_inventory_ids.add(inventory_id)
@@ -255,16 +258,16 @@ def batch_stock_out(data):
                 error_count += 1
                 product_info = inventory_details.get(inventory_id, {})
                 product_code = product_info.get("product_code", "未知")
-                error_messages.append(f"库存ID {inventory_id}({product_code})（支持0）：处理失败 - {str(e)}")
+                error_messages.append(f"库存ID {inventory_id}({product_code})：处理失败 - {str(e)}")
 
-        # 批量添加操作记录
+        # 批量添加操作记录+更新库存状态
         if success_count > 0 and new_operation_records:
             try:
                 new_records_df = pd.DataFrame(new_operation_records)
                 operation_df = pd.concat([operation_df, new_records_df], ignore_index=True)
                 csv_data["operation_record"] = operation_df
 
-                # 批量更新库存状态（兼容0）
+                # 仅更新库存状态，不修改数量（适配特殊库存）
                 batch_update_inventory_status(list(updated_inventory_ids), csv_data)
 
             except Exception as e:
@@ -284,10 +287,10 @@ def batch_stock_out(data):
                     "message": f"数据保存异常: {str(e)}"
                 }, 500
 
-        # 构建响应
+        # 构建响应（标注特殊库存）
         response_data = {
             "status": "success" if success_count > 0 else "partial_success",
-            "message": f"批量出库完成！成功: {success_count} 个，失败: {error_count} 个（兼容库存ID=0）",
+            "message": f"批量出库完成！成功: {success_count} 个，失败: {error_count} 个（含{len(special_stock_ids)}个特殊库存）",
             "data": {
                 "success_count": success_count,
                 "error_count": error_count,
@@ -295,11 +298,13 @@ def batch_stock_out(data):
                 "batch_size": len(stock_out_items),
                 "mode": "统一数量" if is_unified_mode else "差异化数量",
                 "operator": operator,
-                "out_time": out_time
+                "out_time": out_time,
+                "special_stock_count": len(special_stock_ids),
+                "special_stock_ids": special_stock_ids
             }
         }
 
-        # 成功详情（明确包含0的情况）
+        # 成功详情（标注特殊库存）
         if success_count > 0:
             success_details = []
             for item in valid_items[:min(10, len(valid_items))]:
@@ -307,18 +312,17 @@ def batch_stock_out(data):
                 if inventory_id in inventory_details:
                     info = inventory_details[inventory_id]
                     success_details.append({
-                        "inventory_id": inventory_id,  # 0会被正常展示
+                        "inventory_id": inventory_id,
                         "product_name": info.get("product_name", ""),
                         "product_code": info.get("product_code", ""),
-                        "out_quantity": item["out_quantity"]
+                        "out_quantity": item["out_quantity"],
+                        "is_special_stock": info.get("is_special_stock", False)
                     })
             response_data["data"]["success_details"] = success_details
 
-        # 错误详情
         if error_messages:
             response_data["data"]["error_details"] = error_messages[:20]
 
-        # 无成功记录返回错误
         if success_count == 0:
             response_data["status"] = "error"
             return response_data, 400
@@ -333,8 +337,3 @@ def batch_stock_out(data):
             "status": "error",
             "message": f"系统异常: {str(e)}"
         }, 500
-
-
-
-
-

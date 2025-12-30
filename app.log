@@ -1,0 +1,8 @@
+2025-12-29 09:19:27,154 - INFO - 启动服务，初始化Excel文件...
+2025-12-29 09:19:27,235 - INFO - [服务配置] 图片上传目录: /Users/sh23/PycharmProjects/InventorySystem-ts/backend/image
+2025-12-29 09:19:27,235 - INFO - [服务配置] 最大上传文件大小: 16.0MB
+2025-12-29 09:19:27,235 - INFO - [服务配置] 允许的图片格式: {'gif', 'png', 'webp', 'jpg', 'bmp', 'jpeg'}
+2025-12-29 09:19:27,467 - INFO - 启动服务，初始化Excel文件...
+2025-12-29 09:19:27,557 - INFO - [服务配置] 图片上传目录: /Users/sh23/PycharmProjects/InventorySystem-ts/backend/image
+2025-12-29 09:19:27,557 - INFO - [服务配置] 最大上传文件大小: 16.0MB
+2025-12-29 09:19:27,557 - INFO - [服务配置] 允许的图片格式: {'jpg', 'gif', 'jpeg', 'webp', 'png', 'bmp'}
