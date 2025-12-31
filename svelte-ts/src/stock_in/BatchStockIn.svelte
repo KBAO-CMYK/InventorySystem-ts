@@ -2,6 +2,8 @@
   import { api, formatStockInData, validateFormData, handleApiError } from '../lib/api';
   import type { ApiSuccessResponse } from '../lib/api';
   import ImageUpload from '../image/ImageUpload.svelte';
+  // 新增：导入生成临时货号的子组件
+  import GenerateTempCodeButton from './GenerateTempCodeButton.svelte';
 
   // ========== 类型定义 ==========
   interface BatchVariation {
@@ -163,6 +165,15 @@
       });
       return variation;
     });
+  }
+
+  // ========== 新增：处理临时货号生成逻辑 ==========
+  function handleTempCodeGenerated(code: string) {
+    batchForm.start_code = code;
+    // 清空结束编号，避免连号干扰（临时货号默认是单个）
+    batchForm.end_code = '';
+    // 可选：提示用户货号已生成
+    showMessage(`已生成临时货号：${code}`, 'info');
   }
 
   // ========== 事件处理函数 ==========
@@ -473,14 +484,23 @@
       <div class="form-row compact-row">
         <div class="form-group">
           <label for="start_code">起始编号 *</label>
-          <input
-            id="start_code"
-            type="text"
-            bind:value={batchForm.start_code}
-            placeholder="如：PROD001"
-            required
-            disabled={loading}
-          />
+          <!-- 新增：输入框+按钮容器 -->
+          <div class="input-with-button">
+            <input
+              id="start_code"
+              type="text"
+              bind:value={batchForm.start_code}
+              placeholder="如：PROD001"
+              required
+              disabled={loading}
+            />
+            <!-- 新增：生成临时货号按钮 -->
+            <GenerateTempCodeButton
+              disabled={loading}
+              prefix="TEMP-"
+              on:generate={e => handleTempCodeGenerated(e.detail)}
+            />
+          </div>
         </div>
         <div class="form-group">
           <label for="end_code">结束编号</label>
@@ -848,3 +868,17 @@
     </button>
   </form>
 </div>
+
+<!-- 新增：补充输入框+按钮的样式 -->
+<style>
+  .input-with-button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .input-with-button input {
+    flex: 1;
+  }
+</style>

@@ -2,6 +2,8 @@
   import { api, formatStockInData, validateFormData, handleApiError } from '../lib/api';
   import type { ApiSuccessResponse } from '../lib/api';
   import ImageUpload from '../image/ImageUpload.svelte';
+  // 新增：导入生成临时货号组件（和批量入库保持一致）
+  import GenerateTempCodeButton from './GenerateTempCodeButton.svelte';
 
   // ========== 类型定义 ==========
   interface FeatureVariation {
@@ -151,6 +153,13 @@
 
   // 计算总数量（响应式）
   $: totalQuantity = calculateTotalQuantity();
+
+  // ========== 新增：处理临时货号生成逻辑（和批量入库保持一致） ==========
+  function handleTempCodeGenerated(code: string) {
+    singleForm.product_code = code;
+    // 提示用户货号已生成
+    showMessage(`已生成临时货号：${code}`, 'info');
+  }
 
   // ========== 事件处理函数 ==========
   function handleSingleImageChange(path: string): void {
@@ -489,14 +498,23 @@
       <div class="form-row compact-row">
         <div class="form-group">
           <label for="product_code">商品编号 *</label>
-          <input
-            id="product_code"
-            type="text"
-            bind:value={singleForm.product_code}
-            placeholder="如：PROD001"
-            required
-            disabled={loading}
-          />
+          <!-- 新增：修改为输入框+按钮容器（和批量入库保持一致） -->
+          <div class="input-with-button">
+            <input
+              id="product_code"
+              type="text"
+              bind:value={singleForm.product_code}
+              placeholder="如：PROD001"
+              required
+              disabled={loading}
+            />
+            <!-- 新增：生成临时货号按钮，事件绑定和批量入库一致 -->
+            <GenerateTempCodeButton
+              disabled={loading}
+              prefix="TEMP-"
+              on:generate={e => handleTempCodeGenerated(e.detail)}
+            />
+          </div>
         </div>
         <div class="form-group">
           <label for="single_类型">商品类型 *</label>
@@ -864,3 +882,17 @@
     </button>
   </form>
 </div>
+
+<!-- 新增：补充输入框+按钮的样式（和批量入库保持一致） -->
+<style>
+  .input-with-button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .input-with-button input {
+    flex: 1;
+  }
+</style>
