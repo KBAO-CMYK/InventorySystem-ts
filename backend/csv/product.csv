@@ -27392,3 +27392,5 @@
 27389,hb1111,,,,,样品
 27390,hb1112,,,,,样品
 27391,TEMP-20251231140506,,,,,样品
+27392,TEMP-20251231142206,,,InventoryImage.svelte:167  读取缓存失败 SecurityError: Failed to read the 'localStorage' property from 'Window': Access is denied for this document.     at deleteImage (InventoryImage.svelte:562:26) getCache @ InventoryImage.svelte:167 InventoryImage.svelte:584  [特征ID:27392] 批量删除失败 SecurityError: Failed to read the 'localStorage' property from 'Window': Access is denied for this document.,,样品
+27393,TEMP-20251231145100,,,,,样品

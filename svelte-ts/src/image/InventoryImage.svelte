@@ -85,6 +85,19 @@
   const MAX_CACHE_ITEMS: number = 100;
   const memoryCache: Map<string, CacheItem> = new Map();
 
+  // 🚨 关键修改1：新增localStorage可用性检测（初始化时执行，避免后续频繁报错）
+  let isLocalStorageAvailable: boolean = false;
+  try {
+    // 测试localStorage是否可用（写入空值再删除）
+    const testKey = '__inventory_image_test__';
+    localStorage.setItem(testKey, '');
+    localStorage.removeItem(testKey);
+    isLocalStorageAvailable = true;
+  } catch (e) {
+    console.warn('当前环境不支持localStorage，将仅使用内存缓存', e);
+    isLocalStorageAvailable = false;
+  }
+
   // ===================== 核心状态计算（区分上传/替换场景） =====================
   // 修复：确保isEmptyPath计算稳定，避免误判
   $: isEmptyPath = (() => {
@@ -117,8 +130,9 @@
   $: cacheKeyDownload = `${String(featureId)}_download_${imagePath || 'empty'}`;
   $: cacheKeyImageBlob = `${String(featureId)}_blob_${imagePath || 'empty'}`;
 
-  // 修复：hasSwitchedToBackup改为响应式，避免状态异常
-  $: hasSwitchedToBackup = false;
+  // 🚨 关键修改2：修复hasSwitchedToBackup的响应式声明（原写法每次触发都会重置为false）
+  let hasSwitchedToBackup = false;
+  // 改为手动控制，不再用$:声明
 
   // ===================== 调试日志 + 自动清理过期缓存 =====================
   $: {
@@ -129,15 +143,18 @@
     console.log('预览URL:', previewImageUrl);
     console.log('下载URL:', downloadImageUrl);
     console.log('模式:', isReplaceMode ? '替换图片' : '首次上传');
+    console.log('localStorage可用:', isLocalStorageAvailable);
 
     if (isEmptyPath) {
       console.warn(`[特征ID:${featureId}] 无有效图片路径`);
     }
-    clearExpiredCache();
+    // 🚨 关键修改3：延迟执行清理过期缓存，避免首次加载就操作localStorage
+    setTimeout(clearExpiredCache, 100);
   }
 
-  // ===================== 缓存操作函数 =====================
+  // ===================== 缓存操作函数（核心优化：适配localStorage不可用场景） =====================
   function getCache(key: string): string | null {
+    // 优先从内存缓存读取
     const memoryItem = memoryCache.get(key);
     if (memoryItem) {
       const now = Date.now();
@@ -146,6 +163,9 @@
       }
       memoryCache.delete(key);
     }
+
+    // localStorage不可用时，直接返回null
+    if (!isLocalStorageAvailable) return null;
 
     try {
       const storageStr = localStorage.getItem(CACHE_PREFIX + key);
@@ -172,6 +192,7 @@
   function setCache(key: string, value: string): void {
     if (!key || !value) return;
 
+    // 先写入内存缓存
     const cacheItem: CacheItem = { value, timestamp: Date.now() };
     memoryCache.set(key, cacheItem);
     if (memoryCache.size > MAX_CACHE_ITEMS) {
@@ -179,6 +200,9 @@
         .sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
       if (oldestEntry) memoryCache.delete(oldestEntry[0]);
     }
+
+    // localStorage不可用时，跳过写入
+    if (!isLocalStorageAvailable) return;
 
     try {
       localStorage.setItem(CACHE_PREFIX + key, JSON.stringify(cacheItem));
@@ -209,6 +233,7 @@
     if (featureId === null || featureId === undefined || featureId === '') return;
     const featureIdStr = String(featureId);
 
+    // 先清理内存缓存
     for (const [key] of memoryCache.entries()) {
       if (key.startsWith(`${featureIdStr}_`)) {
         const cacheItem = memoryCache.get(key);
@@ -218,6 +243,9 @@
         memoryCache.delete(key);
       }
     }
+
+    // localStorage不可用时，跳过清理
+    if (!isLocalStorageAvailable) return;
 
     try {
       for (let i = 0; i < localStorage.length; i++) {
@@ -233,12 +261,18 @@
   }
 
   function refreshImageUrlCache(): void {
+    // 仅清理内存缓存，避免频繁操作localStorage
     memoryCache.delete(cacheKeyPreview);
     memoryCache.delete(cacheKeyDownload);
     memoryCache.delete(cacheKeyImageBlob);
-    localStorage.removeItem(CACHE_PREFIX + cacheKeyPreview);
-    localStorage.removeItem(CACHE_PREFIX + cacheKeyDownload);
-    localStorage.removeItem(CACHE_PREFIX + cacheKeyImageBlob);
+
+    // localStorage可用时才清理
+    if (isLocalStorageAvailable) {
+      localStorage.removeItem(CACHE_PREFIX + cacheKeyPreview);
+      localStorage.removeItem(CACHE_PREFIX + cacheKeyDownload);
+      localStorage.removeItem(CACHE_PREFIX + cacheKeyImageBlob);
+    }
+
     // 强制重新计算URL（响应式触发）
     previewImageUrl = previewImageUrl;
     downloadImageUrl = downloadImageUrl;
@@ -246,6 +280,7 @@
 
   function clearExpiredCache(): void {
     const now = Date.now();
+    // 先清理内存缓存
     for (const [key, item] of memoryCache.entries()) {
       if (now - item.timestamp > CACHE_EXPIRE_SECONDS * 1000) {
         if (item.value.startsWith('blob:')) {
@@ -254,6 +289,9 @@
         memoryCache.delete(key);
       }
     }
+
+    // localStorage不可用时，跳过清理
+    if (!isLocalStorageAvailable) return;
 
     try {
       for (let i = 0; i < localStorage.length; i++) {
@@ -566,9 +604,12 @@
       memoryCache.delete(oldCacheKeyDownload);
       memoryCache.delete(oldCacheKeyImageBlob);
 
-      localStorage.removeItem(CACHE_PREFIX + oldCacheKeyPreview);
-      localStorage.removeItem(CACHE_PREFIX + oldCacheKeyDownload);
-      localStorage.removeItem(CACHE_PREFIX + oldCacheKeyImageBlob);
+      // localStorage可用时才删除
+      if (isLocalStorageAvailable) {
+        localStorage.removeItem(CACHE_PREFIX + oldCacheKeyPreview);
+        localStorage.removeItem(CACHE_PREFIX + oldCacheKeyDownload);
+        localStorage.removeItem(CACHE_PREFIX + oldCacheKeyImageBlob);
+      }
 
       clearFeatureCache(featureId);
 
