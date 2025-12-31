@@ -9,6 +9,8 @@
   import BatchReturnModal from './modals/ReturnModal.svelte'
   // 导入修改后的图片组件
   import InventoryImage from './image/InventoryImage.svelte'
+  // 新增：导入撤销操作子组件
+  import UndoButton from './modals/UndoButton.svelte'
 
   // ========== 导出Props类型注解 ==========
   export let productTypes: any[] = []
@@ -808,6 +810,16 @@
         <button class="btn-secondary" on:click={exportInventoryCSV} disabled={loading || filteredInventoryList.length === 0}>
           导出CSV
         </button>
+
+        <!-- 新增：撤销操作组件 -->
+        <UndoButton
+          {api}
+          {showMessage}
+          parentLoading={loading}
+          loadInventoryList={loadInventoryList}
+          buttonText="撤销操作"
+          apiBaseUrl="http://localhost:5000"
+        />
       </div>
     </div>
 

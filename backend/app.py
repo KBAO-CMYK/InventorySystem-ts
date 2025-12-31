@@ -1,4 +1,5 @@
-from flask import Flask, request, jsonify, Response, send_from_directory, make_response
+from flask import (Flask, request, jsonify, Response,
+                   send_from_directory, make_response, current_app)
 from flask_cors import CORS
 from typing import List, Dict, Optional
 from stock_in import *
@@ -9,7 +10,7 @@ from get_last_address_info import  get_last_address_info
 from image2 import *
 import logging
 from flask import Flask, request, send_file, jsonify, abort
-
+from undo_last_change import *
 
 
 # ========== 初始化Flask应用 ==========
@@ -255,6 +256,28 @@ def api_product_return():
     result, status_code = product_return(data)
     return jsonify(result), status_code
 
+
+@app.route("/api/undo-last-change", methods=["POST"])
+@api_exception_handler
+def api_undo_last_change():
+    """撤销操作API：默认恢复所有有备份的表（回退上一操作修改的所有表）"""
+    current_app.logger.info("执行撤销最后一次操作请求（恢复所有有备份的表）")
+
+    # 核心修改：不传table_name，默认恢复所有表
+    undo_result = undo_last_change(confirm=False)  # 无table_name → 恢复所有表
+
+    # 构造响应（包含调试信息）
+    status_code = 200 if undo_result["success"] else 400
+    api_response = {
+        "success": undo_result["success"],
+        "message": undo_result["message"],
+        "data": {
+            "restored_tables": undo_result["restored"],  # 显示恢复的所有表
+            "debug_info": undo_result["debug_info"]
+        }
+    }
+
+    return jsonify(api_response), status_code
 
 # ========== 图片相关接口（优化版） ==========
 @app.route("/api/upload-image", methods=["POST"])
