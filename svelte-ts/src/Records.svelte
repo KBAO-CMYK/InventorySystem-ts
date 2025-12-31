@@ -108,11 +108,10 @@
     end_date_hour: ''
   };
 
+  // ========== 替换为库存管理同款分页变量 ==========
   let currentPage: number = 1;
-  let pageSize: number = 10;
+  let itemsPerPage: number = 10;
   let totalPages: number = 1;
-  let totalRecords: number = 0;
-  let pageSizeOptions: number[] = [10, 20, 50, 100];
   let paginatedRecords: OperationRecord[] = [];
   let sortField: string = '操作时间';
   let sortDirection: 'asc' | 'desc' = 'desc';
@@ -151,10 +150,19 @@
     }
   }
 
-  /** 拼接日期+小时为YYYY-MM-DD HH格式 */
-  function getCombinedDateTime(date: string, hour: string): string {
+  /**
+   * 拼接日期+小时为YYYY-MM-DD HH格式
+   * @param date 日期字符串（YYYY-MM-DD）
+   * @param hour 小时字符串（0-23）
+   * @param type 时间类型：'start'（开始时间）| 'end'（结束时间）
+   * @returns 标准时间字符串，无日期时返回空字符串（兼容原有逻辑）
+   */
+  function getCombinedDateTime(date: string, hour: string, type: 'start' | 'end'): string {
     if (!date) return '';
-    const hourStr = hour ? String(Number(hour)).padStart(2, '0') : (date.includes('start') ? '00' : '23');
+    // 处理小时：有值则补零，无值则按类型默认（开始→00，结束→23）
+    const hourStr = hour
+      ? String(Number(hour)).padStart(2, '0')
+      : type === 'start' ? '00' : '23';
     return `${date} ${hourStr}`;
   }
 
@@ -183,12 +191,12 @@
       if (operationFilter.operation_type) params.operation_type = operationFilter.operation_type;
       if (operationFilter.inventory_id) params.inventory_id = operationFilter.inventory_id;
 
-      // 【修改2】API参数拼接YYYY-MM-DD HH格式的时间
+      // 【修复】传入type参数区分开始/结束时间
       if (operationFilter.start_date_date) {
-        params.start_date = getCombinedDateTime(operationFilter.start_date_date, operationFilter.start_date_hour);
+        params.start_date = getCombinedDateTime(operationFilter.start_date_date, operationFilter.start_date_hour, 'start');
       }
       if (operationFilter.end_date_date) {
-        params.end_date = getCombinedDateTime(operationFilter.end_date_date, operationFilter.end_date_hour);
+        params.end_date = getCombinedDateTime(operationFilter.end_date_date, operationFilter.end_date_hour, 'end');
       }
 
       // 类型断言：适配API返回值
@@ -408,10 +416,9 @@
           }
         }
 
-        // 【修改3】日期+小时筛选逻辑
-        // 拼接筛选条件的完整时间
-        const startDateTime = getCombinedDateTime(filter.start_date_date, filter.start_date_hour);
-        const endDateTime = getCombinedDateTime(filter.end_date_date, filter.end_date_hour);
+        // 【修复】传入type参数区分开始/结束时间，确保默认小时正确
+        const startDateTime = getCombinedDateTime(filter.start_date_date, filter.start_date_hour, 'start');
+        const endDateTime = getCombinedDateTime(filter.end_date_date, filter.end_date_hour, 'end');
 
         // 开始时间筛选（精确到小时）
         if (startDateTime && record.操作时间) {
@@ -436,78 +443,30 @@
     }
 
     filteredOperationRecords = sortRecords(filteredOperationRecords);
-    updatePagination();
+    updatePagination(); // 替换后：调用新的分页更新方法
     updateSelectAllState();
   }
 
+  // ========== 替换为库存管理同款分页方法 ==========
   function updatePagination(): void {
-    totalRecords = filteredOperationRecords.length;
-    totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
+    totalPages = Math.ceil(filteredOperationRecords.length / itemsPerPage) || 1;
+    currentPage = Math.min(currentPage, totalPages);
+    currentPage = Math.max(1, currentPage);
 
-    if (currentPage > totalPages) {
-      currentPage = totalPages;
-    }
-
-    const startIndex = (currentPage - 1) * pageSize;
-    const endIndex = Math.min(startIndex + pageSize, totalRecords);
-
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
     paginatedRecords = filteredOperationRecords.slice(startIndex, endIndex);
   }
 
   function goToPage(page: number): void {
-    const targetPage = Math.max(1, Math.min(page, totalPages));
-    if (targetPage !== currentPage) {
-      currentPage = targetPage;
-      updatePagination();
-      updateSelectAllState();
-    }
+    currentPage = page;
+    updatePagination();
   }
 
-  function changePageSize(newSize: number): void {
-    pageSize = newSize;
+  function changeItemsPerPage(value: string): void {
+    itemsPerPage = parseInt(value);
     currentPage = 1;
     updatePagination();
-    updateSelectAllState();
-  }
-
-  function goToFirstPage(): void {
-    goToPage(1);
-  }
-
-  function goToLastPage(): void {
-    goToPage(totalPages);
-  }
-
-  function goToPrevPage(): void {
-    goToPage(currentPage - 1);
-  }
-
-  function goToNextPage(): void {
-    goToPage(currentPage + 1);
-  }
-
-  function getPageNumbers(): number[] {
-    const pages: number[] = [];
-    const maxVisiblePages = 5;
-
-    if (totalPages <= maxVisiblePages) {
-      for (let i = 1; i <= totalPages; i++) {
-        pages.push(i);
-      }
-    } else {
-      let startPage = Math.max(1, currentPage - 2);
-      let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-
-      if (endPage - startPage + 1 < maxVisiblePages) {
-        startPage = Math.max(1, endPage - maxVisiblePages + 1);
-      }
-
-      for (let i = startPage; i <= endPage; i++) {
-        pages.push(i);
-      }
-    }
-
-    return pages;
   }
 
   /** 清空筛选条件时重置日期+小时字段 */
@@ -540,12 +499,12 @@
         exportParams.operation_type = operationFilter.operation_type;
       }
       if (operationFilter.inventory_id) exportParams.inventory_id = operationFilter.inventory_id;
-      // 【修改5】导出参数拼接YYYY-MM-DD HH格式
+      // 【修复】传入type参数区分开始/结束时间
       if (operationFilter.start_date_date) {
-        exportParams.start_date = getCombinedDateTime(operationFilter.start_date_date, operationFilter.start_date_hour);
+        exportParams.start_date = getCombinedDateTime(operationFilter.start_date_date, operationFilter.start_date_hour, 'start');
       }
       if (operationFilter.end_date_date) {
-        exportParams.end_date = getCombinedDateTime(operationFilter.end_date_date, operationFilter.end_date_hour);
+        exportParams.end_date = getCombinedDateTime(operationFilter.end_date_date, operationFilter.end_date_hour, 'end');
       }
 
       const result = await api.exportOperationRecordsCSV(exportParams) as {
@@ -798,7 +757,7 @@
             placeholder="操作人"
           />
         </div>
-        <!-- 【修改6】表单改为日期+小时输入框 -->
+        <!-- 日期+小时输入框 -->
         <div class="form-group">
           <label>开始时间（YYYY-MM-DD HH）</label>
           <input
@@ -846,63 +805,50 @@
     </div>
   </div>
 
-  <div class="pagination-controls">
-    <div class="pagination-left">
-      <div class="page-size-selector">
-        <label>每页显示：</label>
-        <select bind:value={pageSize} on:change={(e) => changePageSize(Number(e.target.value))}>
-          {#each pageSizeOptions as size}
-            <option value={size}>{size} 条</option>
-          {/each}
+  <!-- 替换为库存管理同款操作栏 + 分页控件 -->
+  <div class="section-header">
+    <div class="section-info">
+      共找到 {filteredOperationRecords.length} 条记录
+      {#if selectedRecords.length > 0}
+        <span class="selected-count">
+          已选择 {selectedRecords.length} 项
+          <button
+            class="clear-selected-btn"
+            on:click={clearSelection}
+            title="清空所有选中项"
+          >
+            ×
+          </button>
+        </span>
+      {/if}
+    </div>
+    <div class="section-controls">
+      <div class="pagination-controls">
+        <label>每页显示:</label>
+        <select bind:value={itemsPerPage} on:change={() => changeItemsPerPage(itemsPerPage)}>
+          <option value={10}>10</option>
+          <option value={20}>20</option>
+          <option value={50}>50</option>
+          <option value={100}>100</option>
         </select>
       </div>
-      <div class="sort-info">
-        当前排序：{sortField}{getSortIndicator(sortField)}
-      </div>
-    </div>
-    <div class="pagination-right">
-      <span class="pagination-info">
-        第 {currentPage} / {totalPages} 页，共 {totalRecords} 条记录
-      </span>
-      <div class="pagination-buttons">
-        <button class="pagination-btn" on:click={goToFirstPage} disabled={currentPage === 1}>
-          首页
-        </button>
-        <button class="pagination-btn" on:click={goToPrevPage} disabled={currentPage === 1}>
-          上一页
-        </button>
-        {#each getPageNumbers() as pageNum}
-          <button
-            class="pagination-btn {currentPage === pageNum ? 'active' : ''}"
-            on:click={() => goToPage(pageNum)}>
-            {pageNum}
-          </button>
-        {/each}
-        <button class="pagination-btn" on:click={goToNextPage} disabled={currentPage === totalPages}>
-          下一页
-        </button>
-        <button class="pagination-btn" on:click={goToLastPage} disabled={currentPage === totalPages}>
-          末页
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <div class="section-actions">
-    <button class="btn-primary" on:click={() => loadOperationRecords(true)} disabled={loading}>
-      {loading ? '刷新中...' : '刷新数据'}
-    </button>
-    <button class="btn-secondary" on:click={exportOperationCSV} disabled={loading || filteredOperationRecords.length === 0}>
-      导出全部CSV ({filteredOperationRecords.length})
-    </button>
-    <button class="btn-warning" on:click={exportSelectedOperationCSV} disabled={loading || selectedRecords.length === 0}>
-      导出选中CSV ({selectedRecords.length})
-    </button>
-    {#if selectedRecords.length > 0}
-      <button class="btn-outline" on:click={clearSelection}>
-        清空选中
+      <button
+        class="btn-outline clear-all-selected-btn"
+        on:click={clearSelection}
+        disabled={selectedRecords.length === 0}
+      >
+        清空所有选中
       </button>
-    {/if}
+      <button class="btn-primary" on:click={() => loadOperationRecords(true)} disabled={loading}>
+        {loading ? '刷新中...' : '刷新数据'}
+      </button>
+      <button class="btn-secondary" on:click={exportOperationCSV} disabled={loading || filteredOperationRecords.length === 0}>
+        导出CSV
+      </button>
+      <button class="btn-warning" on:click={exportSelectedOperationCSV} disabled={loading || selectedRecords.length === 0}>
+        导出选中CSV ({selectedRecords.length})
+      </button>
+    </div>
   </div>
 
   {#if loading}
@@ -911,26 +857,6 @@
       <p>加载中，请稍候...</p>
     </div>
   {:else if filteredOperationRecords.length > 0}
-    <div class="results-info">
-      共找到 {filteredOperationRecords.length} 条记录
-      {#if operationFilter.operation_type}
-        （操作类型：{operationFilter.operation_type}）
-      {/if}
-      {#if selectedRecords.length > 0}
-        <span class="selected-count">已选中 {selectedRecords.length} 条</span>
-      {/if}
-      <div class="operation-type-distribution">
-        {#each Object.entries(filteredOperationRecords.reduce((acc, record) => {
-          const type = record.操作类型 || '未知'
-          acc[type] = (acc[type] || 0) + 1
-          return acc
-        }, {})) as [type, count]}
-          <span class="type-badge {type.toLowerCase()}">
-            {type}: {count}
-          </span>
-        {/each}
-      </div>
-    </div>
     <div class="table-container">
       <table class="data-table">
         <thead>
@@ -940,7 +866,7 @@
                 type="checkbox"
                 checked={isAllSelected}
                 on:change={toggleSelectAll}
-                title={isAllSelected ? '取消全选' : '全选当前页'}
+                disabled={paginatedRecords.length === 0}
               />
             </th>
             <th class="sortable" on:click={() => toggleSort('操作ID')}>
@@ -999,44 +925,41 @@
       </table>
     </div>
 
-    <div class="pagination-controls bottom">
-      <div class="pagination-left">
-        <div class="page-size-selector">
-          <label>每页显示：</label>
-          <select bind:value={pageSize} on:change={(e) => changePageSize(Number(e.target.value))}>
-            {#each pageSizeOptions as size}
-              <option value={size}>{size} 条</option>
-            {/each}
-          </select>
-        </div>
-      </div>
-      <div class="pagination-right">
+    <!-- 替换为库存管理同款分页控件 -->
+    {#if totalPages > 1}
+      <div class="pagination">
+        <button class="pagination-btn" disabled={currentPage === 1} on:click={() => goToPage(1)}>
+          首页
+        </button>
+        <button class="pagination-btn" disabled={currentPage === 1} on:click={() => goToPage(currentPage - 1)}>
+          上一页
+        </button>
+
+        {#each Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+          let page = currentPage <= 3 ? i + 1 :
+                    currentPage >= totalPages - 2 ? totalPages - 4 + i :
+                    currentPage - 2 + i;
+          if (page > 0 && page <= totalPages) {
+            return page;
+          }
+        }).filter(Boolean) as page}
+          <button class="pagination-btn {currentPage === page ? 'active' : ''}" on:click={() => goToPage(page)}>
+            {page}
+          </button>
+        {/each}
+
+        <button class="pagination-btn" disabled={currentPage === totalPages} on:click={() => goToPage(currentPage + 1)}>
+          下一页
+        </button>
+        <button class="pagination-btn" disabled={currentPage === totalPages} on:click={() => goToPage(totalPages)}>
+          末页
+        </button>
+
         <span class="pagination-info">
-          第 {currentPage} / {totalPages} 页，共 {totalRecords} 条记录
+          第 {currentPage} 页，共 {totalPages} 页
         </span>
-        <div class="pagination-buttons">
-          <button class="pagination-btn" on:click={goToFirstPage} disabled={currentPage === 1}>
-            首页
-          </button>
-          <button class="pagination-btn" on:click={goToPrevPage} disabled={currentPage === 1}>
-            上一页
-          </button>
-          {#each getPageNumbers() as pageNum}
-            <button
-              class="pagination-btn {currentPage === pageNum ? 'active' : ''}"
-              on:click={() => goToPage(pageNum)}>
-              {pageNum}
-            </button>
-          {/each}
-          <button class="pagination-btn" on:click={goToNextPage} disabled={currentPage === totalPages}>
-            下一页
-          </button>
-          <button class="pagination-btn" on:click={goToLastPage} disabled={currentPage === totalPages}>
-            末页
-          </button>
-        </div>
       </div>
-    </div>
+    {/if}
   {:else if operationRecords.length === 0}
     <div class="no-data">
       暂无操作记录
@@ -1049,7 +972,7 @@
 </section>
 
 <style>
-  /* 原有样式保持不变 */
+  /* 完全恢复原代码的表格数据样式，仅保留分页控件的布局替换 */
   .records-section h2 {
     color: #2c3e50;
     margin-bottom: 25px;
@@ -1116,6 +1039,7 @@
     border-top: 1px solid #dee2e6;
   }
 
+  /* 恢复原代码的按钮样式 */
   .btn-primary, .btn-secondary, .btn-outline, .btn-warning {
     padding: 8px 16px;
     border: none;
@@ -1173,154 +1097,71 @@
     transform: none;
   }
 
-  .pagination-controls {
+  /* 分页控件布局样式（仅替换逻辑，样式适配原代码） */
+  .section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 15px;
-    background: #f8f9fa;
-    border-radius: 8px;
     margin-bottom: 20px;
-    border: 1px solid #e9ecef;
+    padding: 0;
+    background: transparent;
+    border: none;
   }
 
-  .pagination-controls.bottom {
-    margin-top: 20px;
-    margin-bottom: 0;
+  .section-info {
+    font-weight: 500;
+    color: #495057;
+    font-size: 14px;
   }
 
-  .pagination-left {
-    display: flex;
-    align-items: center;
-    gap: 20px;
+  .selected-count {
+    margin-left: 12px;
+    padding: 4px 8px;
+    background: #fff3cd;
+    color: #856404;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: normal;
   }
 
-  .pagination-right {
-    display: flex;
-    align-items: center;
-    gap: 15px;
+  .clear-selected-btn {
+    margin-left: 6px;
+    padding: 0 4px;
+    border: none;
+    background: #dc3545;
+    color: white;
+    border-radius: 2px;
+    cursor: pointer;
+    font-size: 10px;
   }
 
-  .page-size-selector {
+  .section-controls {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
   }
 
-  .page-size-selector label {
+  .pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .pagination-controls label {
     margin: 0;
     font-size: 14px;
     color: #555;
   }
 
-  .page-size-selector select {
+  .pagination-controls select {
     width: auto;
     min-width: 80px;
     padding: 6px 10px;
     font-size: 13px;
   }
 
-  .sort-info {
-    font-size: 14px;
-    color: #666;
-    background: #e3f2fd;
-    padding: 6px 12px;
-    border-radius: 4px;
-    border-left: 3px solid #3498db;
-  }
-
-  .pagination-info {
-    font-size: 14px;
-    color: #555;
-    font-weight: 500;
-  }
-
-  .pagination-buttons {
-    display: flex;
-    gap: 5px;
-  }
-
-  .pagination-btn {
-    padding: 6px 12px;
-    border: 1px solid #dee2e6;
-    background: white;
-    color: #495057;
-    border-radius: 4px;
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    min-width: 36px;
-    text-align: center;
-  }
-
-  .pagination-btn:hover:not(:disabled) {
-    background: #f8f9fa;
-    border-color: #adb5bd;
-  }
-
-  .pagination-btn.active {
-    background: #3498db;
-    color: white;
-    border-color: #3498db;
-  }
-
-  .pagination-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .section-actions {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 20px;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-
-  .results-info {
-    background: #e7f3ff;
-    padding: 15px;
-    border-radius: 8px;
-    margin-bottom: 15px;
-    color: #0066cc;
-    font-weight: 500;
-    border-left: 4px solid #0066cc;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .operation-type-distribution {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-top: 5px;
-  }
-
-  .type-badge {
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 500;
-  }
-
-  .type-badge.入库 { background: #d4edda; color: #155724; }
-  .type-badge.出库 { background: #f8d7da; color: #721c24; }
-  .type-badge.借 { background: #fff3cd; color: #856404; }
-  .type-badge.还 { background: #d1ecf1; color: #0c5460; }
-  .type-badge.次品退回 { background: #e2e3e5; color: #383d41; }
-  .type-badge.未知 { background: #f8f9fa; color: #6c757d; }
-
-  .selected-count {
-    background: #fff3cd;
-    color: #856404;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: normal;
-    align-self: flex-start;
-  }
-
+  /* 完全恢复原代码的表格样式 */
   .table-container {
     overflow-x: auto;
     border-radius: 8px;
@@ -1374,6 +1215,8 @@
   .data-table td {
     padding: 12px;
     border-bottom: 1px solid #e0e0e0;
+    color: #495057;
+    font-size: 14px;
   }
 
   .data-table tr:hover {
@@ -1382,10 +1225,6 @@
 
   .data-table tr.selected {
     background: #e3f2fd;
-  }
-
-  .data-table tr.selected:hover {
-    background: #bbdefb;
   }
 
   .checkbox-header, .checkbox-cell {
@@ -1400,6 +1239,7 @@
     cursor: pointer;
   }
 
+  /* 恢复原代码的操作类型标签样式 */
   .operation-type-out {
     color: #e74c3c;
     font-weight: bold;
@@ -1445,6 +1285,51 @@
     font-weight: bold;
   }
 
+  /* 分页控件基础样式（适配原代码视觉风格） */
+  .pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 5px;
+    margin-top: 20px;
+  }
+
+  .pagination-btn {
+    padding: 6px 12px;
+    border: 1px solid #dee2e6;
+    background: white;
+    color: #495057;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 36px;
+    text-align: center;
+  }
+
+  .pagination-btn:hover:not(:disabled) {
+    background: #f8f9fa;
+    border-color: #adb5bd;
+  }
+
+  .pagination-btn.active {
+    background: #3498db;
+    color: white;
+    border-color: #3498db;
+  }
+
+  .pagination-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .pagination-info {
+    margin-left: 15px;
+    color: #6c757d;
+    font-size: 14px;
+    font-weight: 500;
+  }
+
   .no-data {
     text-align: center;
     padding: 60px 20px;
@@ -1472,6 +1357,7 @@
     to { transform: rotate(360deg); }
   }
 
+  /* 恢复原代码的响应式样式 */
   @media (max-width: 768px) {
     .form-row {
       grid-template-columns: 1fr;
@@ -1492,29 +1378,16 @@
       align-items: stretch;
     }
 
-    .results-info {
-      align-items: flex-start;
-    }
-
-    .operation-type-distribution {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-
-    .pagination-controls {
-      flex-direction: column;
-      gap: 15px;
-    }
-
-    .pagination-left,
-    .pagination-right {
-      width: 100%;
-      justify-content: center;
-    }
-
-    .pagination-buttons {
+    .pagination {
       flex-wrap: wrap;
-      justify-content: center;
+      gap: 4px;
+    }
+
+    .pagination-info {
+      margin-left: 0;
+      margin-top: 8px;
+      text-align: center;
+      width: 100%;
     }
   }
 </style>
