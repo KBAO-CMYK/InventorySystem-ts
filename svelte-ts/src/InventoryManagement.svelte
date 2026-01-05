@@ -807,9 +807,9 @@
           {getRealTimeStock}
         />
 
-        <button class="btn-secondary" on:click={exportInventoryCSV} disabled={loading || filteredInventoryList.length === 0}>
-          导出CSV
-        </button>
+<!--        <button class="btn-secondary" on:click={exportInventoryCSV} disabled={loading || filteredInventoryList.length === 0}>-->
+<!--          导出CSV-->
+<!--        </button>-->
 
 <!--        &lt;!&ndash; 新增：撤销操作组件 &ndash;&gt;-->
 <!--        <UndoButton-->

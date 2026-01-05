@@ -12,7 +12,7 @@
   }
 
   interface VariableField {
-    id: '入库数量' | '单价' | '重量' | '规格' | '材质' | '颜色' | '形状' | '风格' | '厂家' | '厂家地址' | '电话' | '用途' | '备注' | '图片路径';
+    id: '入库数量' | '单价' | '重量' | '规格' | '材质' | '颜色' | '形状' | '风格' | '厂家' | '厂家地址' | '电话' | '用途' | '备注' | '图片路径' | '单位'; // 新增：单位字段
     label: string;
     type: 'number' | 'text';
     enabled: boolean;
@@ -25,6 +25,7 @@
     地址类型: number;
     楼层: number;
     入库数量: number;
+    单位: string; // 新增：单位字段
     架号: string;
     框号: string;
     包号: string;
@@ -57,6 +58,7 @@
     货号: string;
     类型: string;
     入库数量: number;
+    单位?: string; // 新增：单位字段
     入库时间?: string;
     地址类型: number;
     楼层: number;
@@ -100,6 +102,7 @@
     地址类型: 5,
     楼层: 5,
     入库数量: 1,
+    单位: '', // 新增：单位字段初始化
     架号: '',
     框号: '',
     包号: '',
@@ -126,6 +129,7 @@
 
   let variableFields: VariableField[] = [
     { id: '入库数量', label: '入库数量', type: 'number', enabled: false },
+    { id: '单位', label: '单位', type: 'text', enabled: false }, // 新增：单位字段配置
     { id: '单价', label: '单价', type: 'number', enabled: false },
     { id: '重量', label: '重量', type: 'number', enabled: false },
     { id: '规格', label: '规格', type: 'text', enabled: false },
@@ -323,12 +327,13 @@
     }
   }
 
-    // 准备入库数据
+  // 准备入库数据
   function prepareProductData(formData: BatchForm, productCode: string): ProductStockInData {
     const data: ProductStockInData = {
       货号: productCode,
       类型: formData.类型,
       入库数量: parseInt(String(formData.入库数量 ?? ''), 10) || 0,
+      单位: formData.单位 || undefined, // 新增：处理单位字段
       地址类型: parseInt(formData.地址类型.toString()),
       楼层: parseInt(formData.楼层.toString()),
       架号: formData.架号,
@@ -438,6 +443,7 @@
       地址类型: 5,
       楼层: 5,
       入库数量: 1,
+      单位: '', // 新增：重置单位字段
       架号: '',
       框号: '',
       包号: '',
@@ -548,18 +554,18 @@
       </div>
     </div>
 
-    <!-- 第二行：地址类型、楼层、数量、架号、框号、包号 -->
+    <!-- 第二行：地址类型、楼层、数量+单位、架号、框号、包号 -->
     <div class="form-section">
       <div class="form-row compact-row">
         <div class="form-group">
           <label for="batch_地址类型">地址类型 *</label>
           <select id="batch_地址类型" bind:value={batchForm.地址类型} disabled={loading}>
-            <option value={1}>1-楼层+架号（单位：框）</option>
-            <option value={2}>2-楼层+框号（单位：包）</option>
-            <option value={3}>3-楼层+架号+框号（单位：包）</option>
-            <option value={4}>4-楼层+框号+包号（单位：个）</option>
-            <option value={5}>5-楼层+架号+框号+包号（单位：个）</option>
-            <option value={6}>6-楼层+包号（单位：个）</option>
+            <option value={1}>楼层+架号</option>
+            <option value={2}>楼层+框号</option>
+            <option value={3}>楼层+架号+框号</option>
+            <option value={4}>楼层+框号+包号</option>
+            <option value={5}>楼层+架号+框号+包号</option>
+            <option value={6}>楼层+包号</option>
           </select>
         </div>
         <div class="form-group">
@@ -571,20 +577,35 @@
             {/each}
           </select>
         </div>
-        <!-- 入库数量字段只在未被设置为差异化字段时显示 -->
-        {#if !variableFields.find(f => f.id === '入库数量')?.enabled}
-          <div class="form-group">
-            <label for="batch_入库数量">入库数量 *</label>
-            <input
-              id="batch_入库数量"
-              type="number"
-              bind:value={batchForm.入库数量}
-              placeholder="请输入入库数量"
-              min="1"
-              step="1"
-              required
-              disabled={loading}
-            />
+        <!-- 入库数量+单位组合：未被设置为差异化字段时显示 -->
+        {#if !variableFields.find(f => f.id === '入库数量')?.enabled || !variableFields.find(f => f.id === '单位')?.enabled}
+          <div class="form-group quantity-unit-group"> <!-- 新增：数量单位组合样式 -->
+            <label>数量 & 单位 {!variableFields.find(f => f.id === '入库数量')?.enabled ? '*' : ''}</label>
+            <div class="quantity-unit-inputs"> <!-- 新增：数量单位输入框容器 -->
+              {#if !variableFields.find(f => f.id === '入库数量')?.enabled}
+                <input
+                  id="batch_入库数量"
+                  type="number"
+                  bind:value={batchForm.入库数量}
+                  placeholder="数量"
+                  min="1"
+                  step="1"
+                  required
+                  disabled={loading}
+                  class="quantity-input"
+                />
+              {/if}
+              {#if !variableFields.find(f => f.id === '单位')?.enabled}
+                <input
+                  id="batch_单位"
+                  type="text"
+                  bind:value={batchForm.单位}
+                  placeholder="单位"
+                  disabled={loading}
+                  class="unit-input"
+                />
+              {/if}
+            </div>
           </div>
         {/if}
 
@@ -674,7 +695,7 @@
     <div class="form-section">
       <div class="form-row compact-row">
         {#each variableFields as field}
-          {#if !field.enabled && field.id !== '入库数量' && field.id !== '图片路径'}
+          {#if !field.enabled && field.id !== '入库数量' && field.id !== '图片路径' && field.id !== '单位'} <!-- 排除单位字段（已在数量旁显示） -->
             <div class="form-group">
               <label for="batch_{field.id}">{field.label}</label>
               {#if field.type === 'number'}
@@ -880,5 +901,27 @@
 
   .input-with-button input {
     flex: 1;
+  }
+
+  /* 新增：数量+单位组合样式 */
+  .quantity-unit-group {
+    flex: 1;
+    min-width: 180px;
+  }
+
+  .quantity-unit-inputs {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .quantity-input {
+    flex: 2;
+    min-width: 80px;
+  }
+
+  .unit-input {
+    flex: 1;
+    min-width: 60px;
   }
 </style>

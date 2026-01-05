@@ -2,7 +2,6 @@
   import { api, formatStockInData, validateFormData, handleApiError } from '../lib/api';
   import type { ApiSuccessResponse } from '../lib/api';
   import ImageUpload from '../image/ImageUpload.svelte';
-  // 新增：导入生成临时货号组件（和批量入库保持一致）
   import GenerateTempCodeButton from './GenerateTempCodeButton.svelte';
 
   // ========== 类型定义 ==========
@@ -15,11 +14,12 @@
     形状: string;
     风格: string;
     入库数量: number;
-    图片路径: string;
+    单位: string;
+    图片路径: string; // 仅特征组合保留图片字段
   }
 
   interface FeatureField {
-    id: '单价' | '重量' | '规格' | '材质' | '颜色' | '形状' | '风格' | '入库数量' | '图片路径';
+    id: '单价' | '重量' | '规格' | '材质' | '颜色' | '形状' | '风格' | '入库数量' | '单位' | '图片路径';
     label: string;
     type: 'number' | 'text' | 'image';
     required: boolean;
@@ -35,33 +35,21 @@
     包号: string;
     use_auto_in_time: boolean;
     入库时间: string;
-    单价: string;
-    重量: string;
     厂家: string;
     厂家地址: string;
     电话: string;
     用途: string;
-    规格: string;
-    材质: string;
-    颜色: string;
-    形状: string;
-    风格: string;
     备注: string;
-    图片路径: string;
     批次: string;
     操作人: string;
-  }
-
-  interface AddressValidation {
-    types: number[];
-    field: '架号' | '框号' | '包号';
-    message: string;
+    // 彻底移除：公共图片相关字段
   }
 
   interface ProductStockInData {
     货号: string;
     类型: string;
     入库数量: number;
+    单位?: string;
     入库时间?: string;
     地址类型: number;
     楼层: number;
@@ -80,7 +68,7 @@
     电话?: string;
     用途?: string;
     备注?: string;
-    图片路径?: string;
+    图片路径?: string; // 仅从特征组合获取
     批次?: number;
     操作人?: string;
     [key: string]: string | number | undefined;
@@ -108,21 +96,14 @@
     包号: '',
     use_auto_in_time: true,
     入库时间: '',
-    单价: '',
-    重量: '',
     厂家: '',
     厂家地址: '',
     电话: '',
     用途: '',
-    规格: '',
-    材质: '',
-    颜色: '',
-    形状: '',
-    风格: '',
     备注: '',
-    图片路径: '',
     批次: '',
     操作人: ''
+    // 彻底移除：公共图片初始化
   };
 
   let featureVariations: FeatureVariation[] = [
@@ -135,10 +116,12 @@
       形状: '',
       风格: '',
       入库数量: 1,
+      单位: '',
       图片路径: ''
     }
   ];
 
+  // 特征组合字段配置（仅在表格中显示）
   let featureFields: FeatureField[] = [
     { id: '单价', label: '单价', type: 'number', required: false },
     { id: '重量', label: '重量', type: 'number', required: false },
@@ -148,296 +131,244 @@
     { id: '形状', label: '形状', type: 'text', required: false },
     { id: '风格', label: '风格', type: 'text', required: false },
     { id: '入库数量', label: '数量', type: 'number', required: true },
+    { id: '单位', label: '单位', type: 'text', required: false },
     { id: '图片路径', label: '图片', type: 'image', required: false }
   ];
 
-  // 计算总数量（响应式）
+  // 新增：填充功能相关状态（移除了填充范围选项）
+  let fillValues: Partial<FeatureVariation> = {
+    单价: '',
+    重量: '',
+    规格: '',
+    材质: '',
+    颜色: '',
+    形状: '',
+    风格: '',
+    入库数量: '',
+    单位: '',
+    图片路径: ''
+  };
+
   $: totalQuantity = calculateTotalQuantity();
 
-  // ========== 新增：处理临时货号生成逻辑（和批量入库保持一致） ==========
+  // ========== 临时货号逻辑 ==========
   function handleTempCodeGenerated(code: string) {
     singleForm.product_code = code;
-    // 提示用户货号已生成
     showMessage(`已生成临时货号：${code}`, 'info');
   }
 
-  // ========== 事件处理函数 ==========
-  function handleSingleImageChange(path: string): void {
-    singleForm.图片路径 = path;
-  }
-
+  // ========== 事件处理 ==========
+  // 移除：公共图片变更处理函数（已无公共图片字段）
   function handleVariationImageChange(variation: FeatureVariation, path: string): void {
     variation.图片路径 = path;
   }
 
-  // 地址类型变化处理
-  let previousSingle地址类型: number = singleForm.地址类型;
-  $: if (singleForm.地址类型 !== previousSingle地址类型) {
-    // 清空不匹配的地址字段
-    if ([1, 3, 5].includes(previousSingle地址类型) && ![1, 3, 5].includes(singleForm.地址类型)) {
-      singleForm.架号 = '';
-    }
-    if ([2, 3, 4, 5].includes(previousSingle地址类型) && ![2, 3, 4, 5].includes(singleForm.地址类型)) {
-      singleForm.框号 = '';
-    }
-    if ([4, 5, 6].includes(previousSingle地址类型) && ![4, 5, 6].includes(singleForm.地址类型)) {
-      singleForm.包号 = '';
+  // 新增：填充功能实现（仅填充所有行）
+  function handleFillValues(): void {
+    // 过滤掉空值的填充字段
+    const validFillValues = Object.entries(fillValues).reduce((acc, [key, value]) => {
+      if (value !== '' && value !== undefined && value !== null) {
+        acc[key as keyof FeatureVariation] = value;
+      }
+      return acc;
+    }, {} as Partial<FeatureVariation>);
+
+    if (Object.keys(validFillValues).length === 0) {
+      showMessage('请先填写需要填充的字段值', 'warning');
+      return;
     }
 
+    // 填充所有行
+    featureVariations.forEach(variation => {
+      Object.entries(validFillValues).forEach(([key, value]) => {
+        const fieldKey = key as keyof FeatureVariation;
+        switch (fieldKey) {
+          case '入库数量':
+            variation[fieldKey] = value ? Number(value) : 1;
+            break;
+          case '单价':
+          case '重量':
+            variation[fieldKey] = value ? value.toString() : '';
+            break;
+          default:
+            variation[fieldKey] = value as never;
+        }
+      });
+    });
+
+    // 触发响应式更新
+    featureVariations = [...featureVariations];
+    showMessage(`已成功填充${featureVariations.length}行数据`, 'success');
+  }
+
+  let previousSingle地址类型: number = singleForm.地址类型;
+  $: if (singleForm.地址类型 !== previousSingle地址类型) {
+    if ([1, 3, 5].includes(previousSingle地址类型) && ![1, 3, 5].includes(singleForm.地址类型)) singleForm.架号 = '';
+    if ([2, 3, 4, 5].includes(previousSingle地址类型) && ![2, 3, 4, 5].includes(singleForm.地址类型)) singleForm.框号 = '';
+    if ([4, 5, 6].includes(previousSingle地址类型) && ![4, 5, 6].includes(singleForm.地址类型)) singleForm.包号 = '';
     previousSingle地址类型 = singleForm.地址类型;
     fetchLastAddressInfo(singleForm.地址类型, 'single');
   }
 
-  // 手动获取默认地址
   async function handleSingleGetDefaultAddress(): Promise<void> {
     if (singleForm.地址类型) {
       await fetchLastAddressInfo(singleForm.地址类型, 'single');
-
-      if ([1, 3, 5].includes(singleForm.地址类型) && lastAddressInfo.架号) {
-        singleForm.架号 = lastAddressInfo.架号;
-      }
-      if ([2, 3, 4, 5].includes(singleForm.地址类型) && lastAddressInfo.框号) {
-        singleForm.框号 = lastAddressInfo.框号;
-      }
-      if ([4, 5, 6].includes(singleForm.地址类型) && lastAddressInfo.包号) {
-        singleForm.包号 = lastAddressInfo.包号;
-      }
-
+      if ([1, 3, 5].includes(singleForm.地址类型) && lastAddressInfo.架号) singleForm.架号 = lastAddressInfo.架号;
+      if ([2, 3, 4, 5].includes(singleForm.地址类型) && lastAddressInfo.框号) singleForm.框号 = lastAddressInfo.框号;
+      if ([4, 5, 6].includes(singleForm.地址类型) && lastAddressInfo.包号) singleForm.包号 = lastAddressInfo.包号;
       showMessage('已获取默认地址信息', 'success');
     } else {
       showMessage('请先选择地址类型', 'error');
     }
   }
 
-  // 添加特征组合
   function addFeatureVariation(): void {
     featureVariations.push({
-      单价: singleForm.单价 || '',
-      重量: singleForm.重量 || '',
-      规格: singleForm.规格 || '',
-      材质: singleForm.材质 || '',
-      颜色: singleForm.颜色 || '',
-      形状: singleForm.形状 || '',
-      风格: singleForm.风格 || '',
+      单价: '',
+      重量: '',
+      规格: '',
+      材质: '',
+      颜色: '',
+      形状: '',
+      风格: '',
       入库数量: 1,
+      单位: '',
       图片路径: ''
     });
     featureVariations = [...featureVariations];
   }
 
-  // 快速添加多个组合
   function quickAddVariations(count: number = 5): void {
-    for (let i = 0; i < count; i++) {
-      addFeatureVariation();
-    }
+    for (let i = 0; i < count; i++) addFeatureVariation();
   }
 
-  // 删除特征组合
   function removeFeatureVariation(index: number): void {
     featureVariations.splice(index, 1);
     featureVariations = [...featureVariations];
   }
 
-  // 批量填充特征值
-  function quickFillAllFeatures(fieldId: string, value: string | number): void {
-    requestAnimationFrame(() => {
-      featureVariations = featureVariations.map(variation => ({
-        ...variation,
-        [fieldId]: value
-      }));
-    });
-  }
-
-  // 计算总数量
   function calculateTotalQuantity(): number {
-    let total = 0;
-    for (const variation of featureVariations) {
-      const qty = parseInt(variation.入库数量.toString()) || 0;
-      total += qty;
-    }
-    return total;
+    return featureVariations.reduce((total, v) => total + (parseInt(v.入库数量.toString()) || 0), 0);
   }
 
-  // 表单验证
+  // ========== 表单验证 ==========
   function validateSingleForm(): boolean {
     try {
-      if (!singleForm.product_code) {
-        throw new Error('请填写商品编号');
-      }
+      if (!singleForm.product_code) throw new Error('请填写商品编号');
 
-      // 必填字段验证
       const requiredFields = {
         类型: { label: '类型', required: true, type: 'string' },
         楼层: { label: '楼层', required: true, type: 'string' }
       };
       validateFormData(singleForm, requiredFields);
 
-      if (featureVariations.length === 0) {
-        throw new Error('请至少添加一个特征组合');
-      }
+      if (featureVariations.length === 0) throw new Error('请至少添加一个特征组合');
 
-      // 验证每个特征组合
       for (let i = 0; i < featureVariations.length; i++) {
         const variation = featureVariations[i];
         const qty = parseInt(variation.入库数量.toString()) || 0;
+        if (qty <= 0) throw new Error(`第${i + 1}行：请填写有效的数量`);
 
-        if (qty <= 0) {
-          throw new Error(`第${i + 1}行：请填写有效的数量`);
-        }
-
-        // 检查特征值
         const hasFeatureValue = featureFields.some(field =>
           field.id !== '入库数量' && field.id !== '图片路径' &&
           variation[field.id] && variation[field.id].toString().trim() !== ''
         );
-
-        if (!hasFeatureValue) {
-          throw new Error(`第${i + 1}行：请至少填写一个特征值（单价、重量、规格、材质、颜色、形状、风格）`);
-        }
+        if (!hasFeatureValue) throw new Error(`第${i + 1}行：请至少填写一个特征值（单价/重量/规格/材质/颜色/形状/风格/单位）`);
       }
 
-      // 地址验证规则
-      const addressValidations: AddressValidation[] = [
+      const addressValidations = [
         { types: [1, 3, 5], field: '架号', message: '架号不能为空' },
         { types: [2, 3, 4, 5], field: '框号', message: '框号不能为空' },
         { types: [4, 5, 6], field: '包号', message: '包号不能为空' }
       ];
-
-      for (const validation of addressValidations) {
-        if (validation.types.includes(singleForm.地址类型) && !singleForm[validation.field]) {
-          throw new Error(validation.message);
-        }
+      for (const v of addressValidations) {
+        if (v.types.includes(singleForm.地址类型) && !singleForm[v.field]) throw new Error(v.message);
       }
 
       return true;
     } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      showMessage(err.message, 'error');
+      showMessage((error as Error).message, 'error');
       return false;
     }
   }
 
-  // 准备入库数据
+  // ========== 入库数据准备 ==========
   function prepareProductData(formData: SingleForm, productCode: string): ProductStockInData {
     const data: ProductStockInData = {
       货号: productCode,
       类型: formData.类型,
-      入库数量: parseInt(String(formData.入库数量 ?? ''), 10) || 0,
+      入库数量: 0,
       地址类型: parseInt(formData.地址类型.toString()),
       楼层: parseInt(formData.楼层.toString()),
       架号: formData.架号,
       框号: formData.框号,
       包号: formData.包号,
-      单价: formData.单价 ? parseFloat(formData.单价) : undefined,
-      重量: formData.重量 ? parseFloat(formData.重量) : undefined,
-      规格: formData.规格 || undefined,
-      材质: formData.材质 || undefined,
-      颜色: formData.颜色 || undefined,
-      形状: formData.形状 || undefined,
-      风格: formData.风格 || undefined,
       厂家: formData.厂家 || undefined,
       厂家地址: formData.厂家地址 || undefined,
       电话: formData.电话 || undefined,
       用途: formData.用途 || undefined,
       备注: formData.备注 || undefined,
-      图片路径: formData.图片路径 || undefined,
       批次: formData.批次 ? parseInt(formData.批次) : undefined,
       操作人: formData.操作人 || undefined
+      // 彻底移除：公共图片路径相关
     };
-
-    // 处理入库时间
-    if (!formData.use_auto_in_time && formData.入库时间) {
-      data.入库时间 = formData.入库时间;
-    }
-
-    // 移除空值
+    if (!formData.use_auto_in_time && formData.入库时间) data.入库时间 = formData.入库时间;
     Object.keys(data).forEach(key => {
-      const value = data[key as keyof ProductStockInData];
-      if (value === undefined || value === '' || value === null) {
-        delete data[key as keyof ProductStockInData];
-      }
+      if (data[key as keyof ProductStockInData] == null || data[key as keyof ProductStockInData] === '') delete data[key as keyof ProductStockInData];
     });
-
     return data;
   }
 
-  // 准备多特征入库数据
   function prepareSingleStockInData(): ProductStockInData[] {
     return featureVariations.map(variation => {
       const productData = prepareProductData(singleForm, singleForm.product_code);
-
-      // 应用特征字段值
+      // 仅从特征组合中获取特征字段值
       featureFields.forEach(field => {
         if (field.id !== '入库数量' && variation[field.id]) {
           const val = variation[field.id];
           if (val.toString().trim() !== '') {
-            productData[field.id] = field.type === 'number'
-              ? parseFloat(val.toString())
-              : val;
+            productData[field.id] = field.type === 'number' ? parseFloat(val.toString()) : val;
           }
         }
       });
-
-      // 设置数量
       productData.入库数量 = parseInt(variation.入库数量.toString()) || 0;
-
-      // 图片路径优先级
-      if (variation.图片路径) {
-        productData.图片路径 = variation.图片路径;
-      } else if (singleForm.图片路径) {
-        productData.图片路径 = singleForm.图片路径;
-      }
-
+      // 仅使用特征组合自身的图片（无公共图片兜底）
+      if (variation.图片路径) productData.图片路径 = variation.图片路径;
       return productData;
     });
   }
 
-  // 处理多特征入库
+  // ========== 入库操作 ==========
   async function handleSingleStockIn(): Promise<void> {
     if (!validateSingleForm()) return;
-
     updateLoading(true);
     try {
       const stockInItems = prepareSingleStockInData();
-      const response = await api.batchStockIn({
-        stock_in_items: stockInItems
-      }) as ApiSuccessResponse<{
+      const response = await api.batchStockIn({ stock_in_items: stockInItems }) as ApiSuccessResponse<{
         success_count: number;
         error_count: number;
         success_details: string[];
         error_details: string[];
       }>;
-
       if (response.status === 'success') {
-        const { success_count, error_count, error_details } = response.data || {
-          success_count: 0,
-          error_count: 0,
-          error_details: []
-        };
-
-        if (success_count > 0) {
-          showMessage(`多特征入库成功！成功: ${success_count} 个特征组合，失败: ${error_count} 个`, 'success');
-        }
-
+        const { success_count, error_count, error_details } = response.data || { success_count: 0, error_count: 0, error_details: [] };
+        if (success_count > 0) showMessage(`多特征入库成功！成功: ${success_count} 个，失败: ${error_count} 个`, 'success');
         if (error_count > 0 && error_details) {
-          const errorMessages = error_details.slice(0, 3).join('; ');
-          showMessage(`部分特征组合入库失败: ${errorMessages}${error_details.length > 3 ? '...' : ''}`, 'warning');
+          const msg = error_details.slice(0, 3).join('; ') + (error_details.length > 3 ? '...' : '');
+          showMessage(`部分入库失败: ${msg}`, 'warning');
         }
-
         resetSingleForm();
       } else {
-        showMessage(response.message || '多特征入库失败', 'error');
+        showMessage(response.message || '入库失败', 'error');
       }
     } catch (error) {
       console.error('入库错误:', error);
-      const errMsg = handleApiError(error, '入库请求失败');
-      showMessage(errMsg, 'error');
+      showMessage(handleApiError(error, '入库请求失败'), 'error');
     } finally {
       updateLoading(false);
     }
   }
 
-  // 重置表单
   function resetSingleForm(): void {
     singleForm = {
       product_code: '',
@@ -449,21 +380,14 @@
       包号: '',
       use_auto_in_time: true,
       入库时间: '',
-      单价: '',
-      重量: '',
       厂家: '',
       厂家地址: '',
       电话: '',
       用途: '',
-      规格: '',
-      材质: '',
-      颜色: '',
-      形状: '',
-      风格: '',
       备注: '',
-      图片路径: '',
       批次: '',
       操作人: ''
+      // 彻底移除：公共图片路径重置
     };
     featureVariations = [{
       单价: '',
@@ -474,11 +398,24 @@
       形状: '',
       风格: '',
       入库数量: 1,
+      单位: '',
       图片路径: ''
     }];
+    // 重置填充值
+    fillValues = {
+      单价: '',
+      重量: '',
+      规格: '',
+      材质: '',
+      颜色: '',
+      形状: '',
+      风格: '',
+      入库数量: '',
+      单位: '',
+      图片路径: ''
+    };
   }
 
-  // 获取按钮文本
   function getSingleButtonText(): string {
     const baseText = loading ? '入库中...' : '多特征入库';
     return `${baseText} (${featureVariations.length}个组合, ${totalQuantity}个商品)`;
@@ -493,12 +430,11 @@
   </p>
 
   <form on:submit|preventDefault={handleSingleStockIn}>
-    <!-- 第一行：商品编号、类型、操作人、批次 -->
+    <!-- 商品编号、类型、操作人、批次 -->
     <div class="form-section">
       <div class="form-row compact-row">
         <div class="form-group">
           <label for="product_code">商品编号 *</label>
-          <!-- 新增：修改为输入框+按钮容器（和批量入库保持一致） -->
           <div class="input-with-button">
             <input
               id="product_code"
@@ -508,7 +444,6 @@
               required
               disabled={loading}
             />
-            <!-- 新增：生成临时货号按钮，事件绑定和批量入库一致 -->
             <GenerateTempCodeButton
               disabled={loading}
               prefix="TEMP-"
@@ -549,18 +484,18 @@
       </div>
     </div>
 
-    <!-- 第二行：地址类型、楼层、架号、框号、包号 -->
+    <!-- 地址类型、楼层、架号、框号、包号 -->
     <div class="form-section">
       <div class="form-row compact-row">
         <div class="form-group">
           <label for="single_地址类型">地址类型 *</label>
           <select id="single_地址类型" bind:value={singleForm.地址类型} disabled={loading}>
-            <option value={1}>1-楼层+架号（单位：框）</option>
-            <option value={2}>2-楼层+框号（单位：包）</option>
-            <option value={3}>3-楼层+架号+框号（单位：包）</option>
-            <option value={4}>4-楼层+框号+包号（单位：个）</option>
-            <option value={5}>5-楼层+架号+框号+包号（单位：个）</option>
-            <option value={6}>6-楼层+包号（单位：个）</option>
+            <option value={1}>楼层+架号</option>
+            <option value={2}>楼层+框号</option>
+            <option value={3}>楼层+架号+框号</option>
+            <option value={4}>楼层+框号+包号</option>
+            <option value={5}>楼层+架号+框号+包号</option>
+            <option value={6}>楼层+包号</option>
           </select>
         </div>
         <div class="form-group">
@@ -573,7 +508,6 @@
           </select>
         </div>
 
-        <!-- 地址字段区域 -->
         {#if [1, 3, 5].includes(singleForm.地址类型)}
           <div class="form-group">
             <label for="single_架号">架号 *</label>
@@ -647,7 +581,6 @@
         {/if}
       </div>
 
-      <!-- 获取默认地址按钮 -->
       <div class="form-group">
         <button type="button" class="btn-default" on:click={handleSingleGetDefaultAddress} disabled={loading}>
           获取默认地址信息
@@ -655,38 +588,7 @@
       </div>
     </div>
 
-    <!-- 第三行：特征字段公共值 -->
-    <div class="form-section">
-      <div class="form-row compact-row">
-        {#each featureFields as field}
-          {#if field.id !== '入库数量' && field.id !== '图片路径'}
-            <div class="form-group">
-              <label for="single_feature_{field.id}">{field.label}</label>
-              {#if field.type === 'number'}
-                <input
-                  id="single_feature_{field.id}"
-                  type="number"
-                  step="0.01"
-                  bind:value={singleForm[field.id]}
-                  placeholder={`${field.label}（公共值）`}
-                  disabled={loading}
-                />
-              {:else}
-                <input
-                  id="single_feature_{field.id}"
-                  type="text"
-                  bind:value={singleForm[field.id]}
-                  placeholder={`${field.label}（公共值）`}
-                  disabled={loading}
-                />
-              {/if}
-            </div>
-          {/if}
-        {/each}
-      </div>
-    </div>
-
-    <!-- 第四行：其他字段（厂家、厂家地址等） -->
+    <!-- 公共字段区域：仅保留厂家、厂家地址、电话、用途、备注 -->
     <div class="form-section">
       <div class="form-row compact-row">
         <div class="form-group">
@@ -739,20 +641,11 @@
             disabled={loading}
           />
         </div>
-        <!-- 主表单图片上传（可选，特征组合可覆盖） -->
-        <div class="form-group">
-          <label>公共图片（所有组合默认）</label>
-          <ImageUpload
-            bind:value={singleForm.图片路径}
-            productCode={singleForm.product_code}
-            on:change={handleSingleImageChange}
-            disabled={loading}
-          />
-        </div>
+        <!-- 彻底移除：公共图片输入框 -->
       </div>
     </div>
 
-    <!-- 特征组合表格 -->
+    <!-- 特征组合列表（包含所有特征字段，图片仅在组合中显示） -->
     <div class="form-section">
       <div class="section-header">
         <h3>特征组合列表</h3>
@@ -767,67 +660,97 @@
         </div>
       </div>
 
-      <div class="feature-variations-table">
-        <div class="table-header">
-          <div class="row">
+      <div class="feature-variations-table" style="width: 100%;">
+        <div class="table-header" style="display: flex; border-bottom: 1px solid #eee;">
+          <div class="row" style="display: flex; width: 100%;">
             {#each featureFields as field}
-              <div class="cell {field.id === '入库数量' ? 'quantity' : ''}">
+              <div class="cell" style={`padding: 8px; text-align: center; ${field.id === '单位' ? 'width: 60px;' : 'flex: 1; min-width: 70px;'}`}>
                 <span>{field.label}{field.required ? ' *' : ''}</span>
-                {#if singleForm[field.id] && field.id !== '图片路径'}
-                  <button
-                    type="button"
-                    class="btn-quick-fill"
-                    on:click={() => quickFillAllFeatures(field.id, singleForm[field.id])}
-                    title="使用公共值填充所有"
-                    disabled={loading}
-                  >
-                    批量填充
-                  </button>
-                {/if}
               </div>
             {/each}
-            <div class="cell actions">操作</div>
+            <div class="cell actions" style="padding: 8px; min-width: 80px; text-align: center;">操作</div>
+          </div>
+        </div>
+
+        <!-- 新增：填充功能行（移除了下拉框，按钮改为绿色） -->
+        <div class="table-fill-row" style="display: flex; width: 100%; align-items: center; background: #f9f9f9; border-bottom: 2px solid #eee; padding: 4px 0;">
+          {#each featureFields as field}
+            <div class="cell" style={`padding: 4px 8px; ${field.id === '单位' ? 'width: 60px;' : 'flex: 1; min-width: 70px;'}`}>
+              {#if field.type === 'number'}
+                <input
+                  type="text"
+                  bind:value={fillValues[field.id]}
+                  placeholder={`填充${field.label}`}
+                  disabled={loading}
+                  style="width: 100%; padding: 4px; background: #fefefe;"
+                />
+              {:else if field.type === 'image'}
+                <div style="color: #999; font-size: 12px; padding: 4px; text-align: center;"></div>
+              {:else}
+                <input
+                  type="text"
+                  bind:value={fillValues[field.id]}
+                  placeholder={`填充${field.label}`}
+                  disabled={loading}
+                  style="width: 100%; padding: 4px; background: #fefefe;"
+                />
+              {/if}
+            </div>
+          {/each}
+          <div class="cell actions" style="padding: 4px 8px; min-width: 80px; text-align: center;">
+            <button
+              type="button"
+              class="btn-fill"
+              on:click={handleFillValues}
+              disabled={loading}
+              style="padding: 4px 8px; font-size: 12px; width: 100%;"
+            >
+              填充
+            </button>
           </div>
         </div>
 
         <div class="table-body">
           {#each featureVariations as variation, index}
-            <div class="row">
+            <div class="row" style="display: flex; width: 100%; align-items: center; border-bottom: 1px solid #f5f5f5; padding: 4px 0;">
               {#each featureFields as field}
-                <div class="cell {field.id === '入库数量' ? 'quantity' : ''}">
+                <div class="cell" style={`padding: 4px 8px; ${field.id === '单位' ? 'width: 60px;' : 'flex: 1; min-width: 70px;'}`}>
                   {#if field.type === 'number'}
                     <input
                       type="text"
                       bind:value={variation[field.id]}
-                      placeholder={singleForm[field.id] || field.label}
+                      placeholder={field.label}
                       required={field.required}
                       disabled={loading}
+                      style="width: 100%; padding: 4px;"
                     />
                   {:else if field.type === 'image'}
-                    <!-- 特征组合独立图片上传 -->
                     <ImageUpload
                       bind:value={variation[field.id]}
                       productCode={`${singleForm.product_code}_var_${index}`}
                       on:change={(path) => handleVariationImageChange(variation, path)}
                       disabled={loading}
+                      style="width: 100%;"
                     />
                   {:else}
                     <input
                       type="text"
                       bind:value={variation[field.id]}
-                      placeholder={singleForm[field.id] || field.label}
+                      placeholder={field.label}
                       disabled={loading}
+                      style="width: 100%; padding: 4px;"
                     />
                   {/if}
                 </div>
               {/each}
-              <div class="cell actions">
+              <div class="cell actions" style="padding: 4px 8px; min-width: 80px; text-align: center;">
                 {#if featureVariations.length > 1}
                   <button
                     type="button"
                     class="btn-danger"
                     on:click={() => removeFeatureVariation(index)}
                     disabled={loading}
+                    style="padding: 4px 8px; font-size: 12px;"
                   >
                     删除
                   </button>
@@ -837,8 +760,8 @@
           {/each}
         </div>
 
-        <div class="table-footer">
-          <div class="total-summary">
+        <div class="table-footer" style="padding: 8px; border-top: 1px solid #eee;">
+          <div class="total-summary" style="display: flex; gap: 20px;">
             <div class="summary-item">
               <span>特征组合数量：</span>
               <strong>{featureVariations.length} 个</strong>
@@ -853,7 +776,7 @@
     </div>
 
     <!-- 入库时间设置 -->
-    <div class="form-group inline-checkbox">
+    <div class="form-group inline-checkbox" style="margin: 16px 0;">
       <label class="checkbox-label">
         <input
           type="checkbox"
@@ -877,13 +800,12 @@
       </div>
     {/if}
 
-    <button type="submit" class="btn-primary" disabled={loading}>
+    <button type="submit" class="btn-primary" disabled={loading} style="padding: 8px 24px; margin-top: 16px;">
       {getSingleButtonText()}
     </button>
   </form>
 </div>
 
-<!-- 新增：补充输入框+按钮的样式（和批量入库保持一致） -->
 <style>
   .input-with-button {
     display: flex;
@@ -891,8 +813,70 @@
     gap: 8px;
     width: 100%;
   }
-
   .input-with-button input {
     flex: 1;
+  }
+  .form-section {
+    margin-bottom: 16px;
+    padding: 12px;
+    border: 1px solid #f0f0f0;
+    border-radius: 4px;
+  }
+  .form-row.compact-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .form-group {
+    flex: 1;
+    min-width: 120px;
+  }
+  .form-group label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 14px;
+  }
+  .form-group input, .form-group select {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+  }
+  .btn-default {
+    padding: 6px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #f8f8f8;
+    cursor: pointer;
+  }
+  .btn-primary {
+    background: #1890ff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .btn-danger {
+    background: #ff4d4f;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  /* 新增：绿色填充按钮样式 */
+  .btn-fill {
+    background: #52c41a;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .btn-fill:disabled {
+    background: #a3d987;
+    cursor: not-allowed;
+  }
+  .table-fill-row input {
+    border: 1px solid #e0e0e0;
+    border-radius: 3px;
   }
 </style>
