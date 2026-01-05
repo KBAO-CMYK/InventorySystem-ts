@@ -315,7 +315,7 @@ def get_operation_records(operation_type=None, inventory_id=None, start_date=Non
         return {"status": "error", "message": f"系统异常: {str(e)}"}, 500
 
 def batch_update_inventory_status(inventory_ids, csv_data):
-    """批量更新库存状态 - 仅更新状态值，不新增/重命名任何原始字段"""
+    """批量更新库存状态 - 仅显示出库数量和未还数量"""
     try:
         inventory_df = csv_data.get("inventory", pd.DataFrame())
         operation_df = csv_data.get("operation_record", pd.DataFrame())
@@ -340,9 +340,8 @@ def batch_update_inventory_status(inventory_ids, csv_data):
                     print(f"警告：库存ID {inventory_id} 未找到匹配记录")
                     continue
 
-                # 初始化统计变量
-                qty_stats = {"入库": 0.0, "出库": 0.0, "借": 0.0, "还": 0.0}
-                count_stats = {"入库": 0, "出库": 0, "借": 0, "还": 0}
+                # 初始化统计变量（仅保留需要的字段）
+                qty_stats = {"出库": 0.0, "借": 0.0, "还": 0.0}
 
                 if not operation_df.empty:
                     # 过滤该库存ID的操作记录
@@ -353,27 +352,23 @@ def batch_update_inventory_status(inventory_ids, csv_data):
                         inventory_operations = operation_df[inventory_mask].copy()
                         inventory_operations["操作数量"] = pd.to_numeric(inventory_operations["操作数量"], errors="coerce").fillna(0.0)
 
-                        # 统计数量和次数
-                        for op_type in ["入库", "出库", "借", "还"]:
+                        # 仅统计需要的操作类型数量
+                        for op_type in ["出库", "借", "还"]:
                             op_mask = inventory_operations["操作类型"] == op_type
                             if op_mask.any():
                                 qty_stats[op_type] = inventory_operations[op_mask]["操作数量"].sum()
-                                count_stats[op_type] = int(op_mask.sum())
 
-                        # 构建状态字符串（仅更新状态值，不碰其他字段）
+                        # 构建状态字符串（仅保留出库数量 + 未还数量）
                         status_parts = []
-                        if count_stats["入库"] > 0:
-                            status_parts.append(f"入:{count_stats['入库']}次({qty_stats['入库']}个)")
-                        if count_stats["出库"] > 0:
-                            status_parts.append(f"出:{count_stats['出库']}次({qty_stats['出库']}个)")
-                        if count_stats["借"] > 0:
-                            status_parts.append(f"借:{count_stats['借']}次({qty_stats['借']}个)")
-                        if count_stats["还"] > 0:
-                            status_parts.append(f"还:{count_stats['还']}次({qty_stats['还']}个)")
+                        # 显示出库总数量（仅个数，去掉次数）
+                        if qty_stats["出库"] > 0:
+                            status_parts.append(f"出库:{qty_stats['出库']}个")
+                        # 计算并显示未还数量
                         unreturned = round(qty_stats['借'] - qty_stats['还'], 2)
                         if unreturned > 0:
-                            status_parts.append(f"({unreturned}个未还)")
-                        status = " ".join(status_parts)
+                            status_parts.append(f"借出{unreturned}个未还")
+                        # 若无出库也无未还，显示默认文案
+                        status = " ".join(status_parts) if status_parts else "无操作记录"
                     else:
                         status = "无操作记录"
                 else:

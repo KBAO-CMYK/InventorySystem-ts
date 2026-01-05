@@ -10,7 +10,7 @@
   // 导入修改后的图片组件
   import InventoryImage from './image/InventoryImage.svelte'
   // 新增：导入撤销操作子组件
-  import UndoButton from './modals/UndoButton.svelte'
+  // import UndoButton from './modals/UndoButton.svelte'
 
   // ========== 导出Props类型注解 ==========
   export let productTypes: any[] = []
@@ -645,7 +645,7 @@
           />
         </div>
         <div class="form-group">
-          <label for="filter_类型">商品类型</label>
+          <label for="filter_类型">类型</label>
           <select id="filter_类型" bind:value={inventoryFilter.类型}>
             <option value="">全部类型</option>
             {#each productTypes as type}
@@ -811,15 +811,15 @@
           导出CSV
         </button>
 
-        <!-- 新增：撤销操作组件 -->
-        <UndoButton
-          {api}
-          {showMessage}
-          parentLoading={loading}
-          loadInventoryList={loadInventoryList}
-          buttonText="撤销操作"
-          apiBaseUrl="http://localhost:5000"
-        />
+<!--        &lt;!&ndash; 新增：撤销操作组件 &ndash;&gt;-->
+<!--        <UndoButton-->
+<!--          {api}-->
+<!--          {showMessage}-->
+<!--          parentLoading={loading}-->
+<!--          loadInventoryList={loadInventoryList}-->
+<!--          buttonText="撤销操作"-->
+<!--          apiBaseUrl="http://localhost:5000"-->
+<!--        />-->
       </div>
     </div>
 
@@ -843,7 +843,7 @@
             <!-- 图片列 -->
             <th class="image-header">图片</th>
             <th>备注</th>
-            <th>商品类型</th>
+            <th>类型</th>
             <th>累计入库</th>
             <th>累计出库</th>
             <th>当前库存</th>

@@ -530,11 +530,11 @@ def edit_inventory(inventory_id, edit_data):
                 print(f"[错误] 库存编辑：楼层无效 - {floor}", flush=True)
                 return {"status": "error", "message": f"楼层无效，可选楼层：{', '.join(map(str, FLOORS))}"}, 400
 
-        # 商品类型校验
+        # 类型校验
         product_type = str(edit_data.get("类型", "")).strip()
         if product_type != "" and product_type not in PRODUCT_TYPES:
-            print(f"[错误] 库存编辑：商品类型无效 - {product_type}", flush=True)
-            return {"status": "error", "message": f"商品类型无效，可选类型：{', '.join(PRODUCT_TYPES)}"}, 400
+            print(f"[错误] 库存编辑：类型无效 - {product_type}", flush=True)
+            return {"status": "error", "message": f"类型无效，可选类型：{', '.join(PRODUCT_TYPES)}"}, 400
 
         # 7. 更新商品信息（核心修复：feature_id=0时正常处理）
         product_code = str(edit_data.get("货号", "")).strip()

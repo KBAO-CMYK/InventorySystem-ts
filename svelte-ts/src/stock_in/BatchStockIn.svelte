@@ -288,7 +288,7 @@
 
       // 必填字段验证
       const requiredFields = {
-        类型: { label: '商品类型', required: true, type: 'string' },
+        类型: { label: '类型', required: true, type: 'string' },
         楼层: { label: '楼层', required: true, type: 'string' }
       };
       validateFormData(batchForm, requiredFields);
@@ -479,7 +479,7 @@
 
   <!-- 单号/连号入库表单 -->
   <form on:submit|preventDefault={handleBatchStockIn}>
-    <!-- 第一行：起始编号、结束编号、商品类型、操作人、批次 -->
+    <!-- 第一行：起始编号、结束编号、类型、操作人、批次 -->
     <div class="form-section">
       <div class="form-row compact-row">
         <div class="form-group">
@@ -513,9 +513,9 @@
           />
         </div>
         <div class="form-group">
-          <label for="batch_类型">商品类型 *</label>
+          <label for="batch_类型">类型 *</label>
           <select id="batch_类型" bind:value={batchForm.类型} required disabled={loading}>
-            <option value="">请选择商品类型</option>
+            <option value="">请选择类型</option>
             {#each productTypes as type}
               <option value={type}>{type}</option>
             {/each}

@@ -29,7 +29,7 @@
     商品ID: string | number;
     商品编号: string;
     商品名称: string;
-    商品类型: string;
+    类型: string;
     库存数量: number | string;
     次品数量: number | string;
     批次: string;
@@ -231,7 +231,7 @@
                 商品ID: productInfo.商品ID || '',
                 商品编号: productInfo.货号 || productInfo.商品编号 || '',
                 商品名称: productInfo.商品名称 || '',
-                商品类型: productInfo.类型 || productInfo.商品类型 || '',
+                类型: productInfo.类型 || productInfo.类型 || '',
                 库存数量: inventoryInfo.库存数量 || 0,
                 次品数量: inventoryInfo.次品数量 || 0,
                 批次: inventoryInfo.批次 || '',
@@ -273,7 +273,7 @@
                 商品ID: record.商品ID || '',
                 商品编号: record.商品编号 || '',
                 商品名称: record.商品名称 || '',
-                商品类型: record.商品类型 || '',
+                类型: record.类型 || '',
                 库存数量: record.库存数量 || 0,
                 次品数量: record.次品数量 || 0,
                 批次: record.批次 || '',
@@ -405,7 +405,7 @@
           }
         }
 
-        if (filter.product_type && record.商品类型 !== filter.product_type) {
+        if (filter.product_type && record.类型 !== filter.product_type) {
           return false;
         }
 
@@ -546,7 +546,7 @@
     return new Promise((resolve) => {
       const headers: string[] = [
         '操作ID', '操作类型', '关联库存ID', '操作数量', '操作时间', '操作人', '操作备注',
-        '商品编号', '商品名称', '商品类型',
+        '商品编号', '商品名称', '类型',
         '库存数量', '状态', '单位',
         '单价', '规格', '颜色',
         '楼层', '架号', '框号', '包号',
@@ -564,7 +564,7 @@
           record.备注 || '',
           record.商品编号 || '',
           record.商品名称 || '',
-          record.商品类型 || '',
+          record.类型 || '',
           record.库存数量 || '',
           record.状态 || '',
           record.单位 || '',
@@ -737,7 +737,7 @@
           />
         </div>
         <div class="form-group">
-          <label for="operation_filter_product_type">商品类型</label>
+          <label for="operation_filter_product_type">类型</label>
           <select id="operation_filter_product_type" bind:value={operationFilter.product_type}>
             <option value="">全部类型</option>
             {#each productTypes as type}

@@ -6,7 +6,7 @@ EXCEL_FILE = "inventory_system.xlsx"
 BACKUP_FILE = "inventory_system.xlsx.backup"
 
 # 定义商品类型选项
-PRODUCT_TYPES = ["样品", "原材料", "HB"]
+PRODUCT_TYPES = ["样品", "原材料", "HB","大货","大货样"]
 
 # 定义楼层选项和容量
 FLOORS = [1, 2, 3, 4, 5]

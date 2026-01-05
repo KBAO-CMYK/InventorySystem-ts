@@ -166,11 +166,11 @@ def batch_stock_in(data):
                     error_messages.append(err_msg)
                     continue
 
-                # 校验商品类型
+                # 校验类型
                 product_type = str(item["类型"]).strip()
                 if product_type not in PRODUCT_TYPES:
                     error_count += 1
-                    err_msg = f"第{i + 1}条记录商品类型无效: {product_type}"
+                    err_msg = f"第{i + 1}条记录类型无效: {product_type}"
                     error_messages.append(err_msg)
                     continue
 

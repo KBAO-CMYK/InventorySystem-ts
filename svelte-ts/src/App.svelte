@@ -85,11 +85,11 @@
         productTypes = result.data || ["样品", "原材料", "HB"]
         dataCache.productTypes = { data: productTypes, timestamp: now }
       } else {
-        throw new Error(result.message || '获取商品类型失败')
+        throw new Error(result.message || '获取类型失败')
       }
     } catch (error) {
-      console.error('加载商品类型失败:', error)
-      showMessage(handleApiError(error, '加载商品类型失败'), 'error')
+      console.error('加载类型失败:', error)
+      showMessage(handleApiError(error, '加载类型失败'), 'error')
       productTypes = ["样品", "原材料", "HB"]
     }
   }

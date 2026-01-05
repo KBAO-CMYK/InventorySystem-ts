@@ -12,7 +12,7 @@
 
     let editorState = {
         textColor: '#000000',
-        textSize: 24,
+        textSize: 28,
         isCropping: false,
         cropArea: { x: 0, y: 0, width: 0, height: 0 },
         rotateDeg: 0,
@@ -24,8 +24,6 @@
         isFillMode: false,
         isAutoFillMode: false
     };
-
-    // ========== 核心：生成编辑后的图片数据（兼容传Blob/Base64） ==========
     async function getEditedImageBlob(): Promise<Blob | null> {
         const canvas = await getMergedCanvas();
         if (!canvas) return null;
@@ -35,53 +33,84 @@
     }
 
     async function getMergedCanvas() {
-        const img = document.querySelector('.edit-image') as HTMLImageElement;
-        if (!img) return null;
+    const img = document.querySelector('.edit-image') as HTMLImageElement;
+    if (!img) return null;
 
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return null;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
 
-        const width = img.naturalWidth;
-        const height = img.naturalHeight;
+    const width = img.naturalWidth;
+    const height = img.naturalHeight;
+    
+    if (editorState.rotateDeg % 180 !== 0) {
+        canvas.width = height;
+        canvas.height = width;
+    } else {
+        canvas.width = width;
+        canvas.height = height;
+    }
 
-        if (editorState.rotateDeg % 180 !== 0) {
-            canvas.width = height;
-            canvas.height = width;
-        } else {
-            canvas.width = width;
-            canvas.height = height;
+    // 关键：先填充整个画布为白色（确保裁剪/旋转后空白处为白色）
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((editorState.rotateDeg * Math.PI) / 180);
+
+    ctx.filter = `brightness(${editorState.brightness}%) contrast(${editorState.contrast}%)`;
+    ctx.drawImage(img, -width / 2, -height / 2);
+    ctx.filter = 'none';
+
+    const scaleX = width / img.clientWidth;
+    const scaleY = height / img.clientHeight;
+
+    // 先绘制文字
+    ctx.textBaseline = 'middle';  // 与编辑界面的 translate(0, -50%) 匹配，确保垂直居中
+textElements.forEach(text => {
+    ctx.save();
+    const canvasX = -width / 2 + text.position.x * scaleX;
+    const canvasY = -height / 2 + text.position.y * scaleY;
+    ctx.translate(canvasX, canvasY);
+    ctx.rotate(-(editorState.rotateDeg * Math.PI / 180));
+    ctx.fillStyle = text.color;
+    ctx.font = `${text.size * scaleX}px Arial`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';  // 关键修改：左对齐
+    
+    const lines = text.content.replace(/<[^>]*>/g, '').split('\n');
+    const fontSize = text.size * scaleX;
+    const lineHeight = fontSize * 1.2;
+    const totalHeight = lines.length * lineHeight;
+    const startY = -totalHeight / 2 + lineHeight / 2;
+    
+    lines.forEach((line: string, i: number) => {
+        ctx.fillText(line, 0, startY + i * lineHeight);
+    });
+    
+    ctx.restore();
+});
+
+    // 后绘制填充（覆盖文字）
+    fillRects.forEach(rect => {
+        ctx.fillStyle = rect.color || 'white';
+        ctx.fillRect(-width / 2 + rect.x * scaleX, -height / 2 + rect.y * scaleY, rect.width * scaleX, rect.height * scaleY);
+    });
+
+    ctx.restore();
+
+    return canvas;
+}
+
+    async function handleDownload() {
+        const canvas = await getMergedCanvas();
+        if (canvas) {
+            const link = document.createElement('a');
+            link.download = 'edited_image.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
         }
-
-        ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate((editorState.rotateDeg * Math.PI) / 180);
-
-        ctx.filter = `brightness(${editorState.brightness}%) contrast(${editorState.contrast}%)`;
-        ctx.drawImage(img, -width / 2, -height / 2);
-        ctx.filter = 'none';
-
-        const scaleX = width / img.clientWidth;
-        const scaleY = height / img.clientHeight;
-
-        // 先绘制文字
-        ctx.textBaseline = 'top';
-        textElements.forEach(text => {
-            ctx.fillStyle = text.color;
-            ctx.font = `${text.size * scaleX}px Arial`;
-            const plainText = text.content.replace(/<[^>]*>/g, '');
-            ctx.fillText(plainText, -width / 2 + text.position.x * scaleX, -height / 2 + text.position.y * scaleY);
-        });
-
-        // 后绘制填充（覆盖文字）
-        fillRects.forEach(rect => {
-            ctx.fillStyle = rect.color || 'white';
-            ctx.fillRect(-width / 2 + rect.x * scaleX, -height / 2 + rect.y * scaleY, rect.width * scaleX, rect.height * scaleY);
-        });
-
-        ctx.restore();
-
-        return canvas;
     }
 
     // ========== 替换原有保存逻辑：传给前端A ==========
@@ -128,16 +157,6 @@
         }
     }
 
-    async function handleDownload() {
-        const canvas = await getMergedCanvas();
-        if (canvas) {
-            const link = document.createElement('a');
-            link.download = 'edited_image.png';
-            link.href = canvas.toDataURL('image/png');
-            link.click();
-        }
-    }
-
     function handleImageUpload(file: File) {
         const reader = new FileReader();
         reader.onload = (event) => {
@@ -155,10 +174,10 @@
 
 <div class="main-layout">
     <div class="top-right-actions">
-        <SaveDownload
-            disabled={!imageUrl || isSaving}
+        <SaveDownload 
+            disabled={!imageUrl || isSaving} 
             on:save={handleSendToFrontA}
-            on:download={handleDownload}
+            on:download={handleDownload} 
         />
     </div>
 
@@ -170,13 +189,13 @@
             </div>
         </div>
     </aside>
-
+    
     <main class="editor-container">
         {#if imageUrl}
-            <Editor
-                {imageUrl}
-                bind:editorState
-                bind:textElements
+            <Editor 
+                {imageUrl} 
+                bind:editorState 
+                bind:textElements 
                 bind:fillRects
                 on:fillComplete={(e) => fillRects = [...fillRects, e.detail]}
             />
@@ -193,14 +212,14 @@
 </div>
 
 <style>
-    .main-layout {
-        display: flex;
-        width: 100vw;
-        height: 100vh;
-        background: #f5f5f7;
-        position: relative;
+    .main-layout { 
+        display: flex; 
+        width: 100vw; 
+        height: 100vh; 
+        background: #f5f5f7; 
+        position: relative; 
     }
-
+    
     .top-right-actions {
         position: fixed;
         top: 20px;
@@ -212,47 +231,38 @@
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
     }
 
-    .sidebar {
-        width: 280px;
-        border-right: 1px solid #ddd;
-        background: #fff;
-        display: flex;
-        flex-direction: column;
+    .sidebar { 
+        width: 280px; 
+        border-right: 1px solid #ddd; 
+        background: #fff; 
+        display: flex; 
+        flex-direction: column; 
     }
-
-    .sidebar-scroll {
-        flex: 1;
-        overflow-y: auto;
+    .sidebar-scroll { 
+        flex: 1; 
+        overflow-y: auto; 
     }
-
-    .adjuster-section {
-        padding: 20px;
-        border-top: 1px solid #eee;
+    .adjuster-section { 
+        padding: 20px; 
+        border-top: 1px solid #eee; 
     }
-
-    .editor-container {
-        flex: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        overflow: auto;
-        padding: 40px;
+    .editor-container { 
+        flex: 1; 
+        display: flex; 
+        align-items: center; 
+        justify-content: center; 
+        overflow: auto; 
+        padding: 40px; 
     }
-
-    .empty-state {
-        text-align: center;
-        background: white;
-        padding: 60px;
-        border-radius: 12px;
+    
+    .empty-state { 
+        text-align: center; 
+        background: white; 
+        padding: 60px; 
+        border-radius: 12px; 
         box-shadow: 0 2px 12px rgba(0,0,0,0.08);
     }
-
-    .empty-info h3 {
-        margin: 20px 0 10px;
-    }
-
-    .empty-info p {
-        margin: 0;
-        color: #666;
+    .empty-info h3 { 
+        margin: 20px 0 10px; 
     }
 </style>

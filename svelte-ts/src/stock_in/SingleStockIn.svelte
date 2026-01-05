@@ -267,7 +267,7 @@
 
       // 必填字段验证
       const requiredFields = {
-        类型: { label: '商品类型', required: true, type: 'string' },
+        类型: { label: '类型', required: true, type: 'string' },
         楼层: { label: '楼层', required: true, type: 'string' }
       };
       validateFormData(singleForm, requiredFields);
@@ -493,7 +493,7 @@
   </p>
 
   <form on:submit|preventDefault={handleSingleStockIn}>
-    <!-- 第一行：商品编号、商品类型、操作人、批次 -->
+    <!-- 第一行：商品编号、类型、操作人、批次 -->
     <div class="form-section">
       <div class="form-row compact-row">
         <div class="form-group">
@@ -517,9 +517,9 @@
           </div>
         </div>
         <div class="form-group">
-          <label for="single_类型">商品类型 *</label>
+          <label for="single_类型">类型 *</label>
           <select id="single_类型" bind:value={singleForm.类型} required disabled={loading}>
-            <option value="">请选择商品类型</option>
+            <option value="">请选择类型</option>
             {#each productTypes as type}
               <option value={type}>{type}</option>
             {/each}

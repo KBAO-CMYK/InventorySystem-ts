@@ -471,7 +471,7 @@ export const api = {
   // 健康检查
   healthCheck: (): Promise<ApiSuccessResponse> => request('/health'),
 
-  // 获取商品类型
+  // 获取类型
   getProductTypes: (): Promise<ApiSuccessResponse> => request('/product-types'),
 
   // 获取楼层选项
@@ -786,7 +786,7 @@ export const api = {
         }
 
         const headers = [
-          '库存ID', '商品ID', '商品特征ID', '货号', '商品类型', '单价', '重量',
+          '库存ID', '商品ID', '商品特征ID', '货号', '类型', '单价', '重量',
           '厂家ID', '厂家名称', '厂家地址', '厂家电话',
           '地址ID', '地址类型', '楼层', '架号', '框号', '包号', '单位',
           '库存数量', '次品数量', '批次', '状态', '用途', '规格', '备注',
