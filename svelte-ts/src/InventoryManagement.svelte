@@ -27,7 +27,6 @@
   interface InventoryFilter {
     货号: string;
     类型: string;
-    状态: string;
     楼层: string;
     架号: string;
     框号: string;
@@ -39,7 +38,6 @@
   let inventoryFilter: InventoryFilter = {
     货号: '',
     类型: '',
-    状态: '',
     楼层: '',
     架号: '',
     框号: '',
@@ -210,11 +208,6 @@
         return false
       }
 
-      // 库存状态筛选（仅匹配）
-      if (filter.状态 && item.状态 !== filter.状态) {
-        return false
-      }
-
       // 位置信息筛选（仅匹配）
       if (filter.楼层 && item.位置信息?.楼层 !== parseInt(filter.楼层)) {
         return false
@@ -285,7 +278,6 @@
     inventoryFilter = {
       货号: '',
       类型: '',
-      状态: '',
       楼层: '',
       架号: '',
       框号: '',
@@ -634,7 +626,7 @@
   <div class="filter-section">
     <h3>筛选条件</h3>
     <div class="filter-form">
-      <div class="form-row">
+      <div class="form-row form-row-2cols">
         <div class="form-group">
           <label for="filter_货号">货号</label>
           <input
@@ -651,15 +643,6 @@
             {#each productTypes as type}
               <option value={type}>{type}</option>
             {/each}
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="filter_状态">状态</label>
-          <select id="filter_状态" bind:value={inventoryFilter.状态}>
-            <option value="">全部状态</option>
-            <option value="正常">正常</option>
-            <option value="已出库">已出库</option>
-            <option value="异常">异常</option>
           </select>
         </div>
       </div>
@@ -703,7 +686,7 @@
         </div>
       </div>
 
-      <div class="form-row">
+      <div class="form-row form-row-3cols">
         <div class="form-group">
           <label for="filter_厂家">厂家</label>
           <input
@@ -1074,6 +1057,15 @@
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 15px;
     margin-bottom: 15px;
+  }
+
+  /* 优化布局：2列和3列表单行 */
+  .form-row-2cols {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+
+  .form-row-3cols {
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   }
 
   .form-group {
@@ -1551,6 +1543,10 @@
     }
 
     .form-row {
+      grid-template-columns: 1fr;
+    }
+
+    .form-row-2cols, .form-row-3cols {
       grid-template-columns: 1fr;
     }
   }
